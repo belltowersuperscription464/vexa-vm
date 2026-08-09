@@ -1,0 +1,32 @@
+[Unit]
+Description=Consume approved Vexa-VM update requests
+Documentation=https://github.com/ItzGlace/vaxa-vm/blob/main/docs/UPDATES.md
+Requires=vexa-update-executor-ready.service
+After=network-online.target vexa-update-executor-ready.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/opt/vexa-vm/current/bin/vexa-update-helper dispatch
+TimeoutStartSec=40min
+UMask=0077
+NoNewPrivileges=true
+
+# APT/dpkg and systemctl require host filesystem and service-manager access.
+# The helper itself supplies the fixed executable/package/path allowlists.
+PrivateTmp=true
+PrivateDevices=false
+ProtectHome=true
+ProtectClock=true
+ProtectHostname=true
+ProtectControlGroups=true
+ProtectKernelModules=true
+ProtectKernelTunables=true
+ProtectKernelLogs=true
+LockPersonality=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+SystemCallArchitectures=native
+
+[Install]
+WantedBy=multi-user.target

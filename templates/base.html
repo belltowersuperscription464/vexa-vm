@@ -1,0 +1,123 @@
+<!doctype html>
+<html lang="en" class="h-full scroll-smooth">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <meta name="theme-color" content="#02021f">
+  <meta name="referrer" content="same-origin">
+  <meta name="csrf-token" content="">
+  <title>{% block title %}Control panel{% endblock title %} · Vexa VM</title>
+  <link rel="icon" type="image/png" href="/static/images/vexa-vm-emblem.png">
+  <link rel="stylesheet" href="/static/css/app.css">
+  {% block head %}{% endblock head %}
+</head>
+<body class="min-h-full font-light" data-page="{% block page_id %}admin{% endblock page_id %}">
+  <a href="#main-content" class="sr-only z-[100] rounded-lg bg-orbit-400 px-4 py-2 font-medium text-void focus:not-sr-only focus:fixed focus:left-4 focus:top-4">Skip to content</a>
+
+  <div class="min-h-screen lg:grid lg:grid-cols-[17rem_minmax(0,1fr)]">
+    <div id="mobile-backdrop" class="fixed inset-0 z-40 hidden bg-void/80 backdrop-blur-sm lg:hidden" data-close-sidebar></div>
+    <aside id="sidebar" class="fixed inset-y-0 left-0 z-50 flex w-[17rem] -translate-x-full flex-col border-r border-white/10 bg-slate-950/95 px-4 py-5 shadow-2xl backdrop-blur-xl transition-transform duration-200 lg:sticky lg:top-0 lg:h-screen lg:translate-x-0 lg:bg-slate-950/55" aria-label="Primary navigation">
+      <div class="flex items-center justify-between px-2">
+        <a href="/overall" class="group flex items-center gap-3" aria-label="Vexa VM dashboard">
+          <img src="/static/images/vexa-vm-emblem.png" alt="" class="h-10 w-10 object-contain drop-shadow-[0_0_14px_rgba(14,165,233,.35)]" width="40" height="40">
+          <span><span class="block text-lg font-extralight tracking-wide text-white">vexa<span class="text-orbit-300">-vm</span></span><span class="block text-[10px] font-normal uppercase tracking-[.24em] text-slate-500">KVM control plane</span></span>
+        </a>
+        <button type="button" class="btn-secondary h-10 w-10 p-0 lg:hidden" data-close-sidebar aria-label="Close navigation">
+          <svg viewBox="0 0 24 24" class="h-5 w-5 fill-none stroke-current" stroke-width="1.8"><path d="m6 6 12 12M18 6 6 18"/></svg>
+        </button>
+      </div>
+
+      <nav class="mt-8 flex-1 space-y-7 overflow-y-auto" aria-label="Administration">
+        <div>
+          <p class="mb-2 px-3 text-[10px] font-normal uppercase tracking-[.22em] text-slate-600">Monitor</p>
+          <div class="space-y-1">
+            <a href="/overall" class="nav-link" data-nav="overall"><span class="h-2 w-2 rounded-full bg-orbit-400" aria-hidden="true"></span>Overall</a>
+            <a href="/vms" class="nav-link" data-nav="vms"><span class="h-2 w-2 rounded-full bg-plasma-400" aria-hidden="true"></span>Virtual machines</a>
+            <a href="/network" class="nav-link" data-nav="network"><span class="h-2 w-2 rounded-full bg-nebula-400" aria-hidden="true"></span>Network</a>
+            <a href="/logs" class="nav-link" data-nav="logs"><span class="h-2 w-2 rounded-sm border border-amber-300" aria-hidden="true"></span>Activity &amp; abuse logs</a>
+          </div>
+        </div>
+        <div>
+          <p class="mb-2 px-3 text-[10px] font-normal uppercase tracking-[.22em] text-slate-600">Library</p>
+          <div class="space-y-1">
+            <a href="/isos" class="nav-link" data-nav="isos"><span class="h-2 w-2 rounded-sm border border-orbit-300" aria-hidden="true"></span>Images &amp; ISOs</a>
+          </div>
+        </div>
+        <div>
+          <p class="mb-2 px-3 text-[10px] font-normal uppercase tracking-[.22em] text-slate-600">System</p>
+          <div class="space-y-1">
+            <a href="/settings" class="nav-link" data-nav="settings"><span class="h-2 w-2 rotate-45 border border-nebula-300" aria-hidden="true"></span>Settings</a>
+            <a href="/docs" class="nav-link" data-nav="docs"><span class="h-2 w-2 rounded-full border border-plasma-300" aria-hidden="true"></span>API documentation</a>
+          </div>
+        </div>
+      </nav>
+
+      <div class="mt-5 rounded-2xl border border-white/10 bg-white/[.035] p-3.5">
+        <div class="flex items-center justify-between gap-3">
+          <div class="min-w-0">
+            <p id="sidebar-node-name" class="truncate text-sm font-normal text-slate-200">Local node</p>
+            <p id="sidebar-node-meta" class="truncate text-xs text-slate-500">Checking services…</p>
+          </div>
+          <span id="sidebar-health-dot" class="h-2.5 w-2.5 shrink-0 rounded-full bg-amber-300 shadow-[0_0_15px_rgba(253,224,71,.5)]" title="Health is being checked"></span>
+        </div>
+      </div>
+    </aside>
+
+    <div class="min-w-0">
+      <header class="sticky top-0 z-30 border-b border-white/[.07] bg-void/80 backdrop-blur-xl">
+        <div class="flex h-[4.5rem] items-center gap-3 px-4 sm:px-6 xl:px-8">
+          <button type="button" class="btn-secondary h-10 w-10 shrink-0 p-0 lg:hidden" data-open-sidebar aria-label="Open navigation" aria-controls="sidebar" aria-expanded="false">
+            <svg viewBox="0 0 24 24" class="h-5 w-5 fill-none stroke-current" stroke-width="1.8"><path d="M4 7h16M4 12h16M4 17h16"/></svg>
+          </button>
+          <nav class="min-w-0 flex-1" aria-label="Breadcrumb">
+            <p class="truncate text-xs uppercase tracking-[.17em] text-slate-500">Node / <span class="text-slate-300">{% block breadcrumb %}Dashboard{% endblock breadcrumb %}</span></p>
+          </nav>
+          <div class="hidden items-center gap-2 rounded-full border border-white/10 bg-white/[.035] px-3 py-1.5 text-xs text-slate-400 sm:flex" title="Live metrics connection">
+            <span id="live-indicator" class="h-1.5 w-1.5 rounded-full bg-amber-300"></span><span id="live-label">Connecting</span>
+          </div>
+          <button type="button" class="btn-secondary h-10 w-10 p-0" data-command-trigger aria-label="Search and commands" title="Search and commands">
+            <svg viewBox="0 0 24 24" class="h-5 w-5 fill-none stroke-current" stroke-width="1.7"><circle cx="11" cy="11" r="6.5"/><path d="m16 16 4 4"/></svg>
+          </button>
+          <div class="relative">
+            <button type="button" class="flex h-10 items-center gap-2 rounded-xl border border-white/10 bg-white/[.035] px-2.5 text-sm font-normal text-slate-200 hover:bg-white/[.07]" data-account-trigger aria-haspopup="menu" aria-expanded="false">
+              <span id="account-initial" class="grid h-6 w-6 place-items-center rounded-lg bg-gradient-to-br from-plasma-500/70 to-nebula-500/70 text-[10px]">A</span><span id="account-username" class="hidden sm:inline">Admin</span>
+            </button>
+            <div class="panel absolute right-0 mt-2 hidden w-52 p-2" role="menu" data-account-menu>
+              <a href="/settings#security" role="menuitem" class="block rounded-lg px-3 py-2 text-sm text-slate-300 hover:bg-white/5">Account security</a>
+              <button type="button" role="menuitem" class="w-full rounded-lg px-3 py-2 text-left text-sm text-rose-200 hover:bg-rose-400/10" data-logout>Sign out</button>
+            </div>
+          </div>
+        </div>
+      </header>
+
+      <main id="main-content" class="mx-auto w-full max-w-[1600px] p-4 sm:p-6 xl:p-8" tabindex="-1">
+        {% block content %}{% endblock content %}
+      </main>
+    </div>
+  </div>
+
+  <div id="toast-region" class="pointer-events-none fixed right-4 top-20 z-[90] flex w-[min(24rem,calc(100vw-2rem))] flex-col gap-3" aria-live="polite" aria-atomic="true"></div>
+
+  <dialog id="confirm-dialog" class="w-[min(30rem,calc(100%-2rem))] rounded-2xl border border-white/10 bg-slate-950 p-0 text-slate-100 shadow-2xl backdrop:bg-void/80 backdrop:backdrop-blur-sm">
+    <form method="dialog" class="p-6">
+      <div class="mb-5 flex items-start gap-3">
+        <span class="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-rose-400/10 text-rose-300" aria-hidden="true">!</span>
+        <div><h2 id="confirm-title" class="text-lg font-normal text-white">Confirm action</h2><p id="confirm-message" class="mt-1 text-sm leading-6 text-slate-400"></p></div>
+      </div>
+      <label id="confirm-phrase-wrap" class="mb-5 hidden"><span class="label normal-case tracking-normal">Type <strong id="confirm-phrase-label" class="font-medium text-white"></strong> to continue</span><input id="confirm-phrase" class="field" autocomplete="off"></label>
+      <div class="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+        <button value="cancel" class="btn-secondary">Cancel</button>
+        <button id="confirm-submit" value="confirm" class="btn-danger">Confirm</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="command-dialog" class="w-[min(42rem,calc(100%-2rem))] rounded-2xl border border-white/10 bg-slate-950 p-0 text-slate-100 shadow-2xl backdrop:bg-void/80 backdrop:backdrop-blur-sm">
+    <div class="p-3"><label for="command-input" class="sr-only">Search pages and virtual machines</label><input id="command-input" class="field text-base" placeholder="Search pages and virtual machines…" autocomplete="off"><div id="command-results" class="mt-2 max-h-80 overflow-y-auto"></div><p class="px-3 py-2 text-xs text-slate-600">Press Escape to close · Enter to open</p></div>
+  </dialog>
+
+  <script src="/static/js/app.js" defer></script>
+  {% block scripts %}{% endblock scripts %}
+</body>
+</html>

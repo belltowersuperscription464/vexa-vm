@@ -1,0 +1,36 @@
+[Unit]
+Description=Validate the Vexa-VM privileged update executor boundary
+Documentation=https://github.com/ItzGlace/vaxa-vm/blob/main/docs/UPDATES.md
+After=local-fs.target
+Before=vexa-update-dispatch.service vexa-update-dispatch.path
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/opt/vexa-vm/current/bin/vexa-update-helper ready
+ExecStop=/opt/vexa-vm/current/bin/vexa-update-helper unready
+RuntimeDirectory=vexa-vm
+RuntimeDirectoryMode=0755
+UMask=0077
+
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectClock=true
+ProtectHostname=true
+ProtectControlGroups=true
+ProtectKernelModules=true
+ProtectKernelTunables=true
+ProtectKernelLogs=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+RestrictNamespaces=true
+SystemCallArchitectures=native
+ReadWritePaths=/run/vexa-vm /var/lib/vexa-vm/updates /var/lib/vexa-vm/update-helper /opt/vexa-vm/releases
+
+[Install]
+WantedBy=multi-user.target

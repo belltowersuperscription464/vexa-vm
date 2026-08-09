@@ -1,0 +1,42 @@
+@import url("https://fonts.googleapis.com/css2?family=Noto+Sans:wght@100;200;300;400;500;600&display=swap");
+
+/* Tailwind v3 reads this configuration through the CLI argument lookup;
+   Tailwind v4 also requires the explicit compatibility directive. */
+@config "../../tailwind.config.js";
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root { color-scheme: dark; }
+  html { @apply bg-void text-slate-100 antialiased; }
+  body { @apply min-h-screen bg-void bg-galaxy-radial font-sans font-extralight; }
+  * { scrollbar-color: rgba(170,85,247,.55) rgba(15,23,42,.45); }
+  :focus-visible { @apply outline-none ring-2 ring-orbit-300 ring-offset-2 ring-offset-void; }
+}
+
+@layer components {
+  .glass { @apply border border-white/10 bg-slate-950/55 shadow-glow backdrop-blur-xl; }
+  .panel { @apply glass rounded-2xl; }
+  .card { @apply panel p-5; }
+  .btn { @apply inline-flex items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-sm font-normal transition disabled:pointer-events-none disabled:opacity-40; }
+  .btn-primary { @apply btn bg-gradient-to-r from-plasma-500 to-nebula-500 text-white shadow-glow hover:brightness-110; }
+  .btn-secondary { @apply btn border border-white/10 bg-white/5 text-slate-200 hover:border-orbit-300/40 hover:bg-white/10; }
+  .btn-danger { @apply btn border border-rose-400/25 bg-rose-400/10 text-rose-200 hover:bg-rose-400/20; }
+  .field { @apply w-full rounded-xl border border-white/10 bg-slate-950/75 px-3.5 py-2.5 text-sm font-light text-slate-100 placeholder:text-slate-500 hover:border-white/20 focus:border-orbit-300/60 focus:outline-none focus:ring-2 focus:ring-orbit-400/15; }
+  .label { @apply mb-1.5 block text-xs font-normal uppercase tracking-widest text-slate-400; }
+  .nav-link { @apply flex items-center gap-3 rounded-xl px-3.5 py-2.5 text-sm text-slate-400 transition hover:bg-white/5 hover:text-white; }
+  .nav-link-active { @apply bg-gradient-to-r from-plasma-500/20 to-nebula-500/10 text-white ring-1 ring-plasma-400/20; }
+  .badge { @apply inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] font-normal uppercase tracking-wider; }
+  .table-shell { @apply overflow-hidden rounded-2xl border border-white/10; }
+  .data-table { @apply min-w-full divide-y divide-white/10 text-left text-sm; }
+  .data-table thead { @apply bg-white/[.035] text-xs uppercase tracking-wider text-slate-500; }
+  .data-table th { @apply px-4 py-3 font-normal; }
+  .data-table td { @apply whitespace-nowrap px-4 py-4 text-slate-300; }
+  .data-table tbody { @apply divide-y divide-white/[.06]; }
+  .data-table tbody tr { @apply bg-slate-950/25 transition hover:bg-white/[.035]; }
+  .metric-track { @apply h-1.5 overflow-hidden rounded-full bg-white/[.07]; }
+  .metric-fill { @apply h-full rounded-full bg-gradient-to-r from-orbit-400 via-plasma-400 to-nebula-400 transition-all duration-500; }
+  .skeleton { @apply animate-pulse rounded-lg bg-white/[.06]; }
+}

@@ -1,0 +1,60 @@
+[package]
+name = "vexa-vm"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.75"
+description = "Open-source KVM node management panel and API"
+license = "AGPL-3.0-or-later"
+repository = "https://github.com/ItzGlace/vaxa-vm"
+
+[lib]
+name = "vexa_vm"
+path = "src/lib.rs"
+
+[[bin]]
+name = "vexa-vm"
+path = "src/main.rs"
+
+[dependencies]
+aes-gcm = "0.10.3"
+anyhow = "1.0.86"
+argon2 = "0.5.3"
+async-trait = "0.1.80"
+axum = { version = "0.7.5", features = ["macros", "multipart", "ws"] }
+base64 = "0.22.1"
+chrono = { version = "0.4.38", features = ["serde"] }
+flate2 = "1.0.30"
+futures-util = "0.3.30"
+hmac = "0.12.1"
+http = "1.1.0"
+ipnet = { version = "2.9.0", features = ["serde"] }
+mime_guess = "2.0.4"
+rand = "0.8.5"
+reqwest = { version = "0.12.4", default-features = false, features = ["json", "rustls-tls", "stream"] }
+ring = "0.17.8"
+rusqlite = { version = "0.31.0", features = ["bundled", "chrono"] }
+serde = { version = "1.0.203", features = ["derive"] }
+serde_json = "1.0.117"
+sha1 = "0.10.6"
+sha2 = "0.10.8"
+subtle = "2.5.0"
+tar = { version = "0.4.46", default-features = false }
+tera = "1.19.1"
+thiserror = "1.0.61"
+tokio = { version = "1.37.0", features = ["full"] }
+tokio-util = { version = "0.7.11", features = ["io"] }
+tower = { version = "0.4.13", features = ["util"] }
+tower-http = { version = "0.5.2", features = ["compression-gzip", "fs", "limit", "request-id", "sensitive-headers", "timeout", "trace"] }
+tracing = "0.1.40"
+tracing-subscriber = { version = "0.3.18", features = ["env-filter", "json"] }
+url = "2.5.0"
+uuid = { version = "1.8.0", features = ["serde", "v4"] }
+vexa-guest-protocol = { path = "guest-tools/crates/protocol" }
+
+[dev-dependencies]
+tempfile = "3.10.1"
+
+[profile.release]
+codegen-units = 1
+lto = "thin"
+strip = "symbols"

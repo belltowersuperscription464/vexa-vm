@@ -1,0 +1,512 @@
+use std::{
+    fs::{self, OpenOptions},
+    io::{Read, Write},
+    net::IpAddr,
+    os::unix::fs::OpenOptionsExt,
+    path::{Path, PathBuf},
+    time::{SystemTime, UNIX_EPOCH},
+};
+
+use anyhow::{bail, Context, Result};
+use vexa_guest_protocol::{Command, ResponseData};
+
+use super::{require_user, run_command, ActionOutcome, DeferredAction, Platform};
+use crate::config::Policy;
+
+const MANAGED_BEGIN: &str = "# BEGIN VEXA GUEST TOOLS";
+const MANAGED_END: &str = "# END VEXA GUEST TOOLS";
+const MAX_AUTHORIZED_KEYS_BYTES: u64 = 1024 * 1024;
+// Linux values from <fcntl.h>. This module is compiled only for Linux.
+const O_NONBLOCK: i32 = 0o4000;
+const O_DIRECTORY: i32 = 0o200000;
+const O_NOFOLLOW: i32 = 0o400000;
+
+pub struct NativePlatform;
+
+impl NativePlatform {
+    pub fn new() -> Self {
+        Self
+    }
+
+    fn health(&self, policy: &Policy) -> ResponseData {
+        let mut capabilities = Vec::new();
+        if policy.password && utility_available("chpasswd") {
+            capabilities.push("password".into());
+        }
+        if policy.hostname && utility_available("hostnamectl") {
+            capabilities.push("hostname".into());
+        }
+        if policy.dns
+            && utility_available("systemctl")
+            && utility_available("resolvectl")
+        {
+            capabilities.push("dns".into());
+        }
+        if policy.ssh_keys
+            && ["getent", "runuser", "mkdir", "dd", "chmod", "mv"]
+                .iter()
+                .all(|utility| utility_available(utility))
+        {
+            capabilities.push("ssh_keys".into());
+        }
+        if policy.power && utility_available("systemctl") {
+            capabilities.push("shutdown".into());
+            capabilities.push("reboot".into());
+        }
+
+        ResponseData::Health {
+            agent_version: env!("CARGO_PKG_VERSION").into(),
+            operating_system: os_description(),
+            hostname: fs::read_to_string("/etc/hostname")
+                .unwrap_or_else(|_| "unknown".into())
+                .trim()
+                .to_owned(),
+            uptime_seconds: uptime_seconds(),
+            capabilities,
+        }
+    }
+
+    fn set_password(&self, username: &str, password: &str) -> Result<()> {
+        let payload = format!("{username}:{password}\n");
+        run_command("chpasswd", &[], Some(payload.as_bytes()))
+    }
+
+    fn set_hostname(&self, hostname: &str) -> Result<()> {
+        run_command("hostnamectl", &["set-hostname", hostname], None)
+    }
+
+    fn set_dns(&self, interface: Option<&str>, servers: &[IpAddr]) -> Result<()> {
+        let directory = Path::new("/etc/systemd/resolved.conf.d");
+        fs::create_dir_all(directory).context("failed to create systemd-resolved directory")?;
+        let addresses = servers
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>()
+            .join(" ");
+        let contents = format!(
+            "# Managed by Vexa Guest Tools. Manual changes may be replaced.\n[Resolve]\nDNS={addresses}\n"
+        );
+        atomic_write_root_owned(
+            &directory.join("90-vexa-guest-tools.conf"),
+            contents.as_bytes(),
+        )?;
+        run_command("systemctl", &["restart", "systemd-resolved.service"], None)?;
+
+        if let Some(interface) = interface {
+            let mut arguments = vec!["dns", interface];
+            let rendered = servers.iter().map(ToString::to_string).collect::<Vec<_>>();
+            arguments.extend(rendered.iter().map(String::as_str));
+            run_command("resolvectl", &arguments, None)?;
+        }
+        Ok(())
+    }
+
+    fn set_ssh_keys(&self, username: &str, keys: &[String]) -> Result<()> {
+        let home = user_home(username)?;
+        let ssh_directory = home.join(".ssh");
+        let authorized_keys = ssh_directory.join("authorized_keys");
+
+        refuse_symlink(&home)?;
+        if ssh_directory.exists() {
+            refuse_symlink(&ssh_directory)?;
+        }
+        if authorized_keys.exists() {
+            refuse_symlink(&authorized_keys)?;
+        }
+
+        let ssh_path = ssh_directory
+            .to_str()
+            .context("user SSH directory is not valid UTF-8")?;
+        run_command(
+            "runuser",
+            &["-u", username, "--", "mkdir", "-p", "--", ssh_path],
+            None,
+        )?;
+        run_command(
+            "runuser",
+            &["-u", username, "--", "chmod", "700", "--", ssh_path],
+            None,
+        )?;
+        refuse_symlink(&ssh_directory)?;
+
+        let existing = read_authorized_keys_nofollow(&authorized_keys)?;
+        let content = replace_managed_key_block(&existing, keys)?;
+        atomic_write_as_user(username, &authorized_keys, content.as_bytes())
+    }
+}
+
+impl Platform for NativePlatform {
+    fn execute(&self, command: &Command, policy: &Policy) -> Result<ActionOutcome> {
+        match command {
+            Command::Ping => Ok(ActionOutcome::immediate(ResponseData::Pong {
+                agent_version: env!("CARGO_PKG_VERSION").into(),
+            })),
+            Command::Health => Ok(ActionOutcome::immediate(self.health(policy))),
+            Command::SetPassword { username, password } => {
+                require_enabled(policy.password, "password changes")?;
+                require_user(policy, username)?;
+                self.set_password(username, password)?;
+                Ok(changed("password changed", false))
+            }
+            Command::SetHostname { hostname } => {
+                require_enabled(policy.hostname, "hostname changes")?;
+                self.set_hostname(hostname)?;
+                Ok(changed("hostname changed", false))
+            }
+            Command::SetDns { interface, servers } => {
+                require_enabled(policy.dns, "DNS changes")?;
+                self.set_dns(interface.as_deref(), servers)?;
+                Ok(changed("DNS servers changed", false))
+            }
+            Command::SetSshKeys {
+                username,
+                authorized_keys,
+            } => {
+                require_enabled(policy.ssh_keys, "SSH key changes")?;
+                require_user(policy, username)?;
+                self.set_ssh_keys(username, authorized_keys)?;
+                Ok(changed("managed SSH keys changed", false))
+            }
+            Command::Shutdown => {
+                require_enabled(policy.power, "power actions")?;
+                Ok(deferred("shutdown accepted", DeferredAction::Shutdown))
+            }
+            Command::Reboot => {
+                require_enabled(policy.power, "power actions")?;
+                Ok(deferred("reboot accepted", DeferredAction::Reboot))
+            }
+        }
+    }
+
+    fn execute_deferred(&self, action: DeferredAction) -> Result<()> {
+        match action {
+            DeferredAction::Shutdown => run_command("systemctl", &["poweroff", "--no-block"], None),
+            DeferredAction::Reboot => run_command("systemctl", &["reboot", "--no-block"], None),
+        }
+    }
+}
+
+fn require_enabled(enabled: bool, operation: &str) -> Result<()> {
+    if !enabled {
+        bail!("{operation} are disabled by guest policy");
+    }
+    Ok(())
+}
+
+fn changed(message: &str, reboot_required: bool) -> ActionOutcome {
+    ActionOutcome::immediate(ResponseData::Action {
+        changed: true,
+        reboot_required,
+        message: message.into(),
+    })
+}
+
+fn deferred(message: &str, action: DeferredAction) -> ActionOutcome {
+    ActionOutcome {
+        data: ResponseData::Action {
+            changed: true,
+            reboot_required: false,
+            message: message.into(),
+        },
+        deferred: Some(action),
+    }
+}
+
+fn user_home(username: &str) -> Result<PathBuf> {
+    let output = std::process::Command::new("getent")
+        .args(["passwd", username])
+        .output()
+        .context("failed to look up local user")?;
+    if !output.status.success() {
+        bail!("local user does not exist");
+    }
+    let record = String::from_utf8(output.stdout).context("local user record is not UTF-8")?;
+    let home = record
+        .trim_end()
+        .split(':')
+        .nth(5)
+        .filter(|value| value.starts_with('/'))
+        .context("local user has no valid home directory")?;
+    Ok(PathBuf::from(home))
+}
+
+fn refuse_symlink(path: &Path) -> Result<()> {
+    let metadata = fs::symlink_metadata(path)
+        .with_context(|| format!("failed to inspect {}", path.display()))?;
+    if metadata.file_type().is_symlink() {
+        bail!("refusing to write through a symbolic link");
+    }
+    Ok(())
+}
+
+fn read_authorized_keys_nofollow(path: &Path) -> Result<String> {
+    let file = match OpenOptions::new()
+        .read(true)
+        .custom_flags(O_NOFOLLOW | O_NONBLOCK)
+        .open(path)
+    {
+        Ok(file) => file,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(String::new()),
+        Err(error) => {
+            return Err(error)
+                .with_context(|| format!("failed to read existing {}", path.display()))
+        }
+    };
+    let metadata = file
+        .metadata()
+        .with_context(|| format!("failed to inspect existing {}", path.display()))?;
+    if !metadata.is_file() {
+        bail!("refusing to replace a non-regular authorized_keys file");
+    }
+    if metadata.len() > MAX_AUTHORIZED_KEYS_BYTES {
+        bail!("authorized_keys exceeds the 1 MiB safety limit");
+    }
+    let mut contents = String::with_capacity(metadata.len() as usize);
+    file.take(MAX_AUTHORIZED_KEYS_BYTES + 1)
+        .read_to_string(&mut contents)
+        .with_context(|| format!("failed to read existing {} as UTF-8", path.display()))?;
+    if contents.len() as u64 > MAX_AUTHORIZED_KEYS_BYTES {
+        bail!("authorized_keys exceeds the 1 MiB safety limit");
+    }
+    Ok(contents)
+}
+
+fn atomic_write_as_user(username: &str, path: &Path, contents: &[u8]) -> Result<()> {
+    let parent = path
+        .parent()
+        .context("authorized_keys has no parent directory")?;
+    refuse_symlink(parent)?;
+
+    let suffix = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+    let temporary = parent.join(format!(
+        ".authorized_keys.vexa-{}-{suffix}.tmp",
+        std::process::id()
+    ));
+    let temporary_path = temporary
+        .to_str()
+        .context("temporary authorized_keys path is not valid UTF-8")?;
+    let destination_path = path
+        .to_str()
+        .context("authorized_keys path is not valid UTF-8")?;
+    let output_argument = format!("of={temporary_path}");
+
+    let write_result = run_command(
+        "runuser",
+        &[
+            "-u",
+            username,
+            "--",
+            "dd",
+            &output_argument,
+            "status=none",
+            "oflag=excl,nofollow",
+            "conv=fsync",
+        ],
+        Some(contents),
+    )
+    .and_then(|_| {
+        run_command(
+            "runuser",
+            &[
+                "-u",
+                username,
+                "--",
+                "chmod",
+                "600",
+                "--",
+                temporary_path,
+            ],
+            None,
+        )
+    })
+    .and_then(|_| sync_regular_file_nofollow(&temporary))
+    .and_then(|_| {
+        run_command(
+            "runuser",
+            &[
+                "-u",
+                username,
+                "--",
+                "mv",
+                "-fT",
+                "--",
+                temporary_path,
+                destination_path,
+            ],
+            None,
+        )
+    });
+
+    if let Err(error) = write_result {
+        let _ = run_command(
+            "runuser",
+            &["-u", username, "--", "rm", "-f", "--", temporary_path],
+            None,
+        );
+        return Err(error).context("failed to publish authorized_keys atomically");
+    }
+
+    // Persist the rename itself, not just the temporary file's contents.
+    let directory = OpenOptions::new()
+        .read(true)
+        .custom_flags(O_DIRECTORY | O_NOFOLLOW)
+        .open(parent)
+        .with_context(|| format!("failed to open {} for directory sync", parent.display()))?;
+    directory
+        .sync_all()
+        .with_context(|| format!("failed to sync {}", parent.display()))
+}
+
+fn sync_regular_file_nofollow(path: &Path) -> Result<()> {
+    let file = OpenOptions::new()
+        .read(true)
+        .custom_flags(O_NOFOLLOW | O_NONBLOCK)
+        .open(path)
+        .with_context(|| format!("failed to open {} for sync", path.display()))?;
+    if !file
+        .metadata()
+        .with_context(|| format!("failed to inspect {}", path.display()))?
+        .is_file()
+    {
+        bail!("refusing to sync a non-regular authorized_keys temporary file");
+    }
+    file.sync_all()
+        .with_context(|| format!("failed to sync {}", path.display()))
+}
+
+fn utility_available(name: &str) -> bool {
+    ["/usr/local/sbin", "/usr/local/bin", "/usr/sbin", "/usr/bin", "/sbin", "/bin"]
+        .iter()
+        .map(|directory| Path::new(directory).join(name))
+        .any(|path| path.is_file())
+}
+
+fn replace_managed_key_block(existing: &str, keys: &[String]) -> Result<String> {
+    let before = existing.find(MANAGED_BEGIN);
+    let after = existing.find(MANAGED_END);
+    let mut preserved = match (before, after) {
+        (Some(start), Some(end)) if start <= end => {
+            let suffix = end + MANAGED_END.len();
+            format!("{}{}", &existing[..start], &existing[suffix..])
+        }
+        (None, None) => existing.to_owned(),
+        _ => bail!("authorized_keys contains an incomplete Vexa managed block"),
+    };
+    while preserved.ends_with('\r') || preserved.ends_with('\n') {
+        preserved.pop();
+    }
+    if !preserved.is_empty() {
+        preserved.push('\n');
+    }
+    preserved.push_str(MANAGED_BEGIN);
+    preserved.push('\n');
+    for key in keys {
+        preserved.push_str(key.trim());
+        preserved.push('\n');
+    }
+    preserved.push_str(MANAGED_END);
+    preserved.push('\n');
+    Ok(preserved)
+}
+
+fn atomic_write_root_owned(path: &Path, contents: &[u8]) -> Result<()> {
+    let suffix = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+    let temporary = path.with_extension(format!("tmp-{}-{suffix}", std::process::id()));
+    let mut file = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&temporary)
+        .with_context(|| format!("failed to create {}", temporary.display()))?;
+    file.write_all(contents)?;
+    file.sync_all()?;
+    drop(file);
+    if let Err(error) = fs::rename(&temporary, path) {
+        let _ = fs::remove_file(&temporary);
+        return Err(error).context("failed to publish configuration atomically");
+    }
+    Ok(())
+}
+
+fn uptime_seconds() -> u64 {
+    fs::read_to_string("/proc/uptime")
+        .ok()
+        .and_then(|value| value.split_whitespace().next()?.parse::<f64>().ok())
+        .map(|value| value.max(0.0) as u64)
+        .unwrap_or(0)
+}
+
+fn os_description() -> String {
+    fs::read_to_string("/etc/os-release")
+        .ok()
+        .and_then(|contents| {
+            contents.lines().find_map(|line| {
+                line.strip_prefix("PRETTY_NAME=")
+                    .map(|value| value.trim_matches('"').to_owned())
+            })
+        })
+        .unwrap_or_else(|| "Linux".into())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::os::unix::fs::symlink;
+
+    #[test]
+    fn managed_keys_preserve_unmanaged_content() {
+        let original = "ssh-ed25519 AAAA old\n# BEGIN VEXA GUEST TOOLS\nssh-rsa AAAA stale\n# END VEXA GUEST TOOLS\n";
+        let result = replace_managed_key_block(
+            original,
+            &["ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIEexample".into()],
+        )
+        .expect("replace keys");
+        assert!(result.contains("ssh-ed25519 AAAA old"));
+        assert!(!result.contains("stale"));
+        assert_eq!(result.matches(MANAGED_BEGIN).count(), 1);
+    }
+
+    #[test]
+    fn disabled_policy_reports_no_capabilities() {
+        let policy = Policy {
+            password: false,
+            hostname: false,
+            dns: false,
+            ssh_keys: false,
+            power: false,
+            allowed_users: Vec::new(),
+        };
+        let ResponseData::Health { capabilities, .. } = NativePlatform::new().health(&policy) else {
+            panic!("expected health response");
+        };
+        assert!(capabilities.is_empty());
+    }
+
+    #[test]
+    fn authorized_keys_reader_refuses_symlinks() {
+        let suffix = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock after epoch")
+            .as_nanos();
+        let directory = std::env::temp_dir().join(format!(
+            "vexa-guest-tools-key-test-{}-{suffix}",
+            std::process::id()
+        ));
+        fs::create_dir(&directory).expect("create test directory");
+        let target = directory.join("target");
+        let link = directory.join("authorized_keys");
+        fs::write(&target, "ssh-ed25519 AAAA test\n").expect("write test key");
+        symlink(&target, &link).expect("create test symlink");
+
+        assert!(read_authorized_keys_nofollow(&link).is_err());
+
+        fs::remove_file(&link).expect("remove test symlink");
+        fs::remove_file(&target).expect("remove test target");
+        fs::remove_dir(&directory).expect("remove test directory");
+    }
+}

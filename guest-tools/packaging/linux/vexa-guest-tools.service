@@ -1,0 +1,35 @@
+[Unit]
+Description=Vexa Guest Tools
+Documentation=https://github.com/ItzGlace/vaxa-vm/tree/main/guest-tools
+After=local-fs.target
+ConditionPathExists=/etc/vexa-guest-tools/config.json
+ConditionPathExists=/etc/vexa-guest-tools/secret
+
+[Service]
+Type=simple
+ExecStart=/usr/local/sbin/vexa-guest-tools --config /etc/vexa-guest-tools/config.json
+Restart=on-failure
+RestartSec=2s
+User=root
+Group=root
+UMask=0077
+Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectClock=true
+ProtectControlGroups=true
+ProtectHome=read-only
+ProtectKernelLogs=true
+ProtectKernelModules=true
+ProtectKernelTunables=true
+ProtectSystem=strict
+ReadWritePaths=/etc /home /root
+RestrictAddressFamilies=AF_UNIX
+RestrictNamespaces=true
+RestrictRealtime=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+SystemCallArchitectures=native
+
+[Install]
+WantedBy=multi-user.target

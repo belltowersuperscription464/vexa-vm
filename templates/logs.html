@@ -1,0 +1,36 @@
+{% extends "base.html" %}
+{% block title %}Activity & abuse logs{% endblock title %}
+{% block page_id %}logs{% endblock page_id %}
+{% block breadcrumb %}Activity & abuse logs{% endblock breadcrumb %}
+{% block content %}
+<section aria-labelledby="page-title">
+  <div class="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
+    <div><p class="text-xs font-normal uppercase tracking-[.22em] text-amber-300">Forensics</p><h1 id="page-title" class="mt-2 text-3xl font-hairline text-white sm:text-4xl">Activity &amp; abuse logs</h1><p class="mt-2 text-sm text-slate-400">Append-only administrator, API, customer, VM and network security history.</p></div>
+    <button type="button" class="btn-secondary" data-refresh-logs>Refresh</button>
+  </div>
+  <div class="mt-6 grid gap-4 sm:grid-cols-3">
+    <label><span class="label">Resource type</span><input id="log-resource-type" class="field" placeholder="vm, ip_address, node"></label>
+    <label><span class="label">Resource ID</span><input id="log-resource-id" class="field font-mono" placeholder="Optional exact ID"></label>
+    <label><span class="label">Result</span><select id="log-result" class="field"><option value="">All results</option><option value="success">Successful</option><option value="failure">Failed</option></select></label>
+  </div>
+  <article class="panel mt-6 overflow-hidden">
+    <div class="border-b border-white/[.07] px-5 py-4"><h2 class="text-lg font-extralight text-white">Control-plane activity</h2></div>
+    <div class="overflow-x-auto"><table class="data-table min-w-[1050px]"><thead><tr><th>Time</th><th>Action</th><th>Actor</th><th>VM / resource</th><th>Source IP</th><th>Result</th><th>Request</th></tr></thead><tbody id="audit-log-body"><tr><td colspan="7" class="py-10 text-center text-slate-500">Loading activity…</td></tr></tbody></table></div>
+    <div class="border-t border-white/[.07] p-4 text-center"><button type="button" class="btn-secondary" data-load-more-audit>Load older records</button></div>
+  </article>
+  <article class="panel mt-6 overflow-hidden">
+    <div class="border-b border-white/[.07] px-5 py-4"><h2 class="text-lg font-extralight text-white">Datacenter IP abuse records</h2><p class="mt-1 text-xs text-slate-500">Reports, observed sources, destinations and administrative disposition. Recording a report does not automatically suspend a VM or blacklist its address.</p></div>
+    <form id="abuse-record-form" class="grid gap-4 border-b border-white/[.07] p-5 md:grid-cols-2 xl:grid-cols-4">
+      <label><span class="label">Reported IP</span><input name="address" class="field font-mono" required placeholder="203.0.113.44"></label>
+      <label><span class="label">VM ID (optional)</span><input name="vm_id" class="field font-mono" placeholder="Associated VM UUID"></label>
+      <label><span class="label">Category</span><select name="category" class="field"><option value="spam">Spam</option><option value="port_scan">Port scan</option><option value="ddos">DDoS</option><option value="phishing">Phishing</option><option value="malware">Malware</option><option value="spoofing">Spoofing</option><option value="other">Other</option></select></label>
+      <label><span class="label">Severity (1–10)</span><input name="severity" type="number" min="1" max="10" value="5" class="field" required></label>
+      <label><span class="label">Datacenter / reporter</span><input name="reporter" class="field" maxlength="256" placeholder="Provider abuse desk"></label>
+      <label><span class="label">Provider case</span><input name="provider_reference" class="field font-mono" maxlength="256" placeholder="CASE-1234"></label>
+      <label class="md:col-span-2"><span class="label">Evidence summary</span><input name="summary" class="field" maxlength="2048" required placeholder="Bounded summary; store large evidence in your case system"></label>
+      <div class="md:col-span-2 xl:col-span-4 flex justify-end"><button type="submit" class="btn-primary">Record abuse report</button></div>
+    </form>
+    <div class="overflow-x-auto"><table class="data-table min-w-[1120px]"><thead><tr><th>Observed</th><th>IP</th><th>VM</th><th>Category</th><th>Reporter</th><th>Summary</th><th>Status</th><th><span class="sr-only">Actions</span></th></tr></thead><tbody id="abuse-log-body"><tr><td colspan="8" class="py-10 text-center text-slate-500">No abuse records.</td></tr></tbody></table></div>
+  </article>
+</section>
+{% endblock content %}

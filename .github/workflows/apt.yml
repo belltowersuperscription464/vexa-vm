@@ -1,0 +1,86 @@
+name: Publish signed APT repository
+
+on:
+  workflow_run:
+    workflows: [release]
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag to publish, for example v0.1.0
+        required: true
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: github-pages
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    if: >-
+      vars.VEXA_APT_ENABLED == 'true' &&
+      (github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success')
+    runs-on: ubuntu-24.04
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Resolve release tag
+        id: release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          INPUT_TAG: ${{ inputs.tag }}
+        run: |
+          set -Eeuo pipefail
+          tag="${INPUT_TAG:-}"
+          if [[ -z "${tag}" ]]; then
+            tag="$(gh release view --json tagName --jq .tagName)"
+          fi
+          [[ "${tag}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([+-][0-9A-Za-z.-]+)?$ ]] || {
+            printf 'invalid release tag: %s\n' "${tag}" >&2
+            exit 1
+          }
+          printf 'tag=%s\n' "${tag}" >> "${GITHUB_OUTPUT}"
+
+      - name: Download Debian release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -Eeuo pipefail
+          mkdir dist
+          gh release download "${{ steps.release.outputs.tag }}" \
+            --pattern 'vexa-vm_*_amd64.deb' --dir dist
+          test "$(find dist -maxdepth 1 -name '*.deb' | wc -l)" -eq 1
+
+      - name: Install repository tools
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends apt-utils dpkg-dev gnupg
+
+      - name: Import dedicated APT signing key
+        env:
+          APT_PRIVATE_KEY: ${{ secrets.VEXA_APT_GPG_PRIVATE_KEY }}
+        run: |
+          set -Eeuo pipefail
+          [[ -n "${APT_PRIVATE_KEY}" ]] || { echo 'VEXA_APT_GPG_PRIVATE_KEY is required' >&2; exit 1; }
+          export GNUPGHOME="$(mktemp -d)"
+          chmod 0700 "${GNUPGHOME}"
+          printf '%s' "${APT_PRIVATE_KEY}" | gpg --batch --import
+          printf 'GNUPGHOME=%s\n' "${GNUPGHOME}" >> "${GITHUB_ENV}"
+
+      - name: Build and sign repository
+        env:
+          APT_GPG_KEY_ID: ${{ vars.VEXA_APT_GPG_KEY_ID }}
+        run: ./scripts/build-apt-repository.sh dist/*.deb apt-repository
+
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: apt-repository
+      - name: Deploy GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

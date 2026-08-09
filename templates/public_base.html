@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en" class="h-full">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <meta name="theme-color" content="#02021f">
+  <meta name="referrer" content="no-referrer">
+  <meta http-equiv="Cache-Control" content="no-store">
+  <title>{% block title %}Vexa VM{% endblock title %}</title>
+  <link rel="icon" type="image/png" href="/static/images/vexa-vm-emblem.png">
+  <link rel="stylesheet" href="/static/css/app.css">
+  {% block head %}{% endblock head %}
+</head>
+<body class="min-h-full font-light" data-page="{% block page_id %}public{% endblock page_id %}">
+  <a href="#main-content" class="sr-only z-[100] rounded-lg bg-orbit-400 px-4 py-2 font-medium text-void focus:not-sr-only focus:fixed focus:left-4 focus:top-4">Skip to content</a>
+  {% block body %}
+  <header class="border-b border-white/[.07] bg-void/70 backdrop-blur-xl">
+    <div class="mx-auto flex h-[4.5rem] w-full max-w-7xl items-center justify-between gap-4 px-4 sm:px-6">
+      <a href="/" class="flex items-center gap-3" aria-label="Vexa VM">
+        <img src="/static/images/vexa-vm-emblem.png" alt="" class="h-9 w-9 object-contain drop-shadow-[0_0_12px_rgba(14,165,233,.3)]" width="36" height="36">
+        <span class="text-lg font-extralight tracking-wide text-white">vexa<span class="text-orbit-300">-vm</span></span>
+      </a>
+      <div id="public-session-state" class="hidden items-center gap-2 rounded-full border border-white/10 bg-white/[.035] px-3 py-1.5 text-xs text-slate-400 sm:flex"><span class="h-1.5 w-1.5 rounded-full bg-orbit-300"></span><span>Secure session</span></div>
+    </div>
+  </header>
+  <main id="main-content" class="mx-auto w-full max-w-7xl p-4 sm:p-6 lg:p-8" tabindex="-1">{% block content %}{% endblock content %}</main>
+  {% endblock body %}
+  <div id="toast-region" class="pointer-events-none fixed right-4 top-20 z-[90] flex w-[min(24rem,calc(100vw-2rem))] flex-col gap-3" aria-live="polite" aria-atomic="true"></div>
+  <dialog id="confirm-dialog" class="w-[min(30rem,calc(100%-2rem))] rounded-2xl border border-white/10 bg-slate-950 p-0 text-slate-100 shadow-2xl backdrop:bg-void/80 backdrop:backdrop-blur-sm"><form method="dialog" class="p-6"><h2 id="confirm-title" class="text-lg font-normal">Confirm action</h2><p id="confirm-message" class="mt-2 text-sm leading-6 text-slate-400"></p><label id="confirm-phrase-wrap" class="my-5 hidden"><span class="label normal-case tracking-normal">Type <strong id="confirm-phrase-label" class="font-medium text-white"></strong> to continue</span><input id="confirm-phrase" class="field" autocomplete="off"></label><div class="mt-6 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end"><button value="cancel" class="btn-secondary">Cancel</button><button id="confirm-submit" value="confirm" class="btn-danger">Confirm</button></div></form></dialog>
+  <script src="/static/js/app.js" defer></script>
+  {% block scripts %}{% endblock scripts %}
+</body>
+</html>

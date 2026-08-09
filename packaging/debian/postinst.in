@@ -1,0 +1,101 @@
+#!/bin/sh
+set -eu
+
+VERSION="@VERSION@"
+RELEASE="/opt/vexa-vm/releases/${VERSION}"
+CURRENT="/opt/vexa-vm/current"
+STATE="/var/lib/vexa-vm"
+CONFIG="/etc/vexa-vm"
+ENV_FILE="${CONFIG}/vexa-vm.env"
+PASSWORD_FILE="${STATE}/INITIAL_ADMIN_PASSWORD"
+
+case "${1:-configure}" in
+  configure) ;;
+  *) exit 0 ;;
+esac
+
+if ! getent group vexa >/dev/null 2>&1; then
+  addgroup --system vexa >/dev/null
+fi
+if ! id vexa >/dev/null 2>&1; then
+  adduser --system --ingroup vexa --home "${STATE}" --no-create-home \
+    --disabled-login --disabled-password vexa >/dev/null
+fi
+for group in libvirt kvm; do
+  if getent group "${group}" >/dev/null 2>&1; then
+    adduser vexa "${group}" >/dev/null 2>&1 || true
+  fi
+done
+
+install -d -o root -g root -m 0755 /opt/vexa-vm /opt/vexa-vm/releases
+install -d -o vexa -g vexa -m 0751 "${STATE}"
+install -d -o vexa -g kvm -m 2750 "${STATE}/isos" "${STATE}/cloud-init"
+install -d -o vexa -g kvm -m 2770 "${STATE}/guest-tools"
+install -d -o root -g root -m 0755 "${STATE}/updates" "${STATE}/updates/status"
+install -d -o vexa -g vexa -m 0700 "${STATE}/updates/staged" "${STATE}/updates/requests"
+install -d -o root -g root -m 0700 "${STATE}/updates/processing" \
+  "${STATE}/updates/processed" "${STATE}/updates/rollback" \
+  "${STATE}/update-helper" "${STATE}/update-helper/receipts"
+install -d -o vexa -g kvm -m 2770 /var/lib/libvirt/images/vexa-vm
+install -d -o root -g vexa -m 0750 "${CONFIG}"
+
+if [ -e "${CURRENT}" ] && [ ! -L "${CURRENT}" ]; then
+  echo "vexa-vm: ${CURRENT} exists but is not a symbolic link; refusing activation" >&2
+  exit 1
+fi
+temporary="/opt/vexa-vm/.current-${VERSION}-$$"
+ln -s "releases/${VERSION}" "${temporary}"
+mv -Tf "${temporary}" "${CURRENT}"
+touch "${STATE}/.managed-by-deb"
+chown root:root "${STATE}/.managed-by-deb"
+chmod 0644 "${STATE}/.managed-by-deb"
+
+generated_password=""
+if [ ! -f "${ENV_FILE}" ]; then
+  master_key="$(openssl rand -base64 32 | tr -d '\n')"
+  generated_password="$(openssl rand -base64 24 | tr -d '\n')"
+  umask 077
+  {
+    echo 'VEXA_BIND=127.0.0.1:8080'
+    echo 'VEXA_PUBLIC_URL=http://127.0.0.1:8080'
+    echo "VEXA_DATABASE=${STATE}/vexa.db"
+    echo "VEXA_TEMPLATE_DIR=${CURRENT}/templates"
+    echo "VEXA_STATIC_DIR=${CURRENT}/static"
+    echo 'VEXA_SECURE_COOKIES=false'
+    echo "VEXA_MASTER_KEY=${master_key}"
+    echo 'VEXA_BOOTSTRAP_ADMIN=admin'
+    echo "VEXA_BOOTSTRAP_PASSWORD=${generated_password}"
+    echo 'VEXA_HYPERVISOR=auto'
+    echo 'VEXA_LIBVIRT_URI=qemu:///system'
+    echo 'VEXA_VM_STORAGE=/var/lib/libvirt/images/vexa-vm'
+    echo "VEXA_ISO_STORAGE=${STATE}/isos"
+    echo "VEXA_CLOUD_INIT_STORAGE=${STATE}/cloud-init"
+    echo "VEXA_GUEST_TOOLS_SOCKET_DIR=${STATE}/guest-tools"
+    echo "VEXA_GUEST_TOOLS_LINUX_X86_64_ARTIFACT=${CURRENT}/guest-tools/vexa-guest-tools-linux-x86_64"
+    echo "VEXA_GUEST_TOOLS_WINDOWS_X86_64_ARTIFACT=${CURRENT}/guest-tools/vexa-guest-tools-windows-x86_64.exe"
+    echo 'VEXA_NETWORK_BRIDGE=virbr0'
+    echo 'VEXA_VNC_TTL_SECONDS=600'
+    echo 'VEXA_METRICS_INTERVAL_SECONDS=15'
+    echo 'VEXA_LOG=info'
+  } > "${ENV_FILE}"
+  chown root:vexa "${ENV_FILE}"
+  chmod 0640 "${ENV_FILE}"
+fi
+
+systemctl daemon-reload >/dev/null 2>&1 || true
+systemctl enable vexa-vm.service >/dev/null 2>&1 || true
+if systemctl restart vexa-vm.service >/dev/null 2>&1; then
+  if [ -n "${generated_password}" ]; then
+    printf 'Username: admin\nPassword: %s\n' "${generated_password}" > "${PASSWORD_FILE}"
+    chown root:root "${PASSWORD_FILE}"
+    chmod 0600 "${PASSWORD_FILE}"
+    sed -i '/^VEXA_BOOTSTRAP_PASSWORD=/d' "${ENV_FILE}"
+    echo "vexa-vm: initial credentials saved to ${PASSWORD_FILE} (root-only)"
+    echo "vexa-vm: read them once, change the password, then delete that file"
+  fi
+else
+  echo 'vexa-vm: service did not start; inspect journalctl -u vexa-vm' >&2
+  exit 1
+fi
+
+exit 0

@@ -1,0 +1,20 @@
+{
+  "name": "vexa-vm-web",
+  "private": true,
+  "scripts": {
+    "build:css": "tailwindcss -i ./assets/css/input.css -o ./static/css/app.css --minify",
+    "watch:css": "tailwindcss -i ./assets/css/input.css -o ./static/css/app.css --watch",
+    "vendor:novnc": "node ./scripts/vendor-novnc.mjs",
+    "build": "npm run build:css && npm run vendor:novnc",
+    "test": "npm run test:uuid && npm run test:operations && npm run test:status-links && npm run test:vm-create-username",
+    "test:uuid": "node ./tests/uuid_compat.js",
+    "test:operations": "node ./tests/operation_compat.js",
+    "test:status-links": "node ./tests/status_link_ui.js",
+    "test:vm-create-username": "node ./tests/vm_create_username.js"
+  },
+  "devDependencies": {
+    "@novnc/novnc": "1.5.0",
+    "esbuild": "0.25.5",
+    "tailwindcss": "3.4.17"
+  }
+}

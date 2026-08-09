@@ -1,0 +1,16 @@
+/target/
+/guest-tools/target/
+/node_modules/
+/.env
+/data/
+/dist/
+/tmp/
+/kvm.zip
+/static/vendor/novnc/package/
+**/__pycache__/
+*.py[cod]
+.DS_Store
+*.db
+*.db-shm
+*.db-wal
+*.log

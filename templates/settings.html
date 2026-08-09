@@ -1,0 +1,255 @@
+{% extends "base.html" %}
+{% block title %}Settings{% endblock title %}
+{% block page_id %}settings{% endblock page_id %}
+{% block breadcrumb %}Settings{% endblock breadcrumb %}
+{% block content %}
+<section aria-labelledby="page-title">
+  <div>
+    <p class="text-xs font-normal uppercase tracking-[.22em] text-nebula-300">Node configuration</p>
+    <h1 id="page-title" class="mt-2 text-3xl font-hairline text-white sm:text-4xl">Settings</h1>
+    <p id="settings-summary" class="mt-2 text-sm text-slate-400">Runtime-backed defaults are validated and audited. Host-owned paths and libvirt configuration remain read-only.</p>
+  </div>
+  <div id="settings-alert" class="mt-5 hidden rounded-xl border border-amber-300/20 bg-amber-300/10 p-4 text-sm text-amber-100" role="status"></div>
+
+  <div class="mt-7 grid gap-6 lg:grid-cols-[13rem_minmax(0,1fr)]">
+    <nav class="panel h-fit p-2 lg:sticky lg:top-24" aria-label="Settings sections">
+      <div class="flex gap-1 overflow-x-auto lg:block lg:space-y-1">
+        <button class="min-w-max w-full rounded-xl bg-nebula-500/15 px-3 py-2.5 text-left text-sm font-normal text-white ring-1 ring-nebula-400/20" data-settings-tab="general">General</button>
+        <button class="min-w-max w-full rounded-xl px-3 py-2.5 text-left text-sm text-slate-500 hover:bg-white/5 hover:text-white" data-settings-tab="virtualization">Virtualization</button>
+        <button class="min-w-max w-full rounded-xl px-3 py-2.5 text-left text-sm text-slate-500 hover:bg-white/5 hover:text-white" data-settings-tab="storage">Storage</button>
+        <button class="min-w-max w-full rounded-xl px-3 py-2.5 text-left text-sm text-slate-500 hover:bg-white/5 hover:text-white" data-settings-tab="network">Network defaults</button>
+        <button class="min-w-max w-full rounded-xl px-3 py-2.5 text-left text-sm text-slate-500 hover:bg-white/5 hover:text-white" data-settings-tab="console">Console</button>
+        <button class="min-w-max w-full rounded-xl px-3 py-2.5 text-left text-sm text-slate-500 hover:bg-white/5 hover:text-white" data-settings-tab="security">Security &amp; account</button>
+        <button class="min-w-max w-full rounded-xl px-3 py-2.5 text-left text-sm text-slate-500 hover:bg-white/5 hover:text-white" data-settings-tab="updates">Updates</button>
+        <button class="min-w-max w-full rounded-xl px-3 py-2.5 text-left text-sm text-slate-500 hover:bg-white/5 hover:text-white" data-settings-tab="api">API keys</button>
+      </div>
+    </nav>
+
+    <div class="min-w-0">
+      <form class="panel p-5 sm:p-7" data-settings-panel="general" data-settings-form="general">
+        <div class="border-b border-white/[.07] pb-5">
+          <h2 class="text-xl font-extralight text-white">General</h2>
+          <p class="mt-1 text-sm text-slate-400">Control-plane identity, display policy and live metrics retention.</p>
+        </div>
+        <div class="mt-6 grid gap-5 sm:grid-cols-2">
+          <label><span class="label">Node name</span><input name="node_name" class="field" required maxlength="128"></label>
+          <label><span class="label">Locale</span><select name="locale" class="field"><option value="en-US">English (US)</option><option value="en-GB">English (UK)</option><option value="fa-IR">Persian</option></select></label>
+          <label><span class="label">Display timezone</span><input name="timezone" class="field" placeholder="UTC" required maxlength="128"></label>
+          <label><span class="label">NTP policy</span><input name="ntp_servers" class="field font-mono" placeholder="time.cloudflare.com, pool.ntp.org"></label>
+          <label><span class="label">Metrics interval (seconds)</span><input name="sample_interval_seconds" type="number" min="5" max="3600" class="field"></label>
+          <label><span class="label">Metrics retention (days)</span><input name="metrics_retention_days" type="number" min="1" max="3650" class="field"></label>
+        </div>
+        <p class="mt-4 text-xs leading-5 text-slate-600">Timezone and NTP values describe guest defaults; Vexa-VM does not rewrite the host clock remotely.</p>
+        <div class="mt-6 flex justify-end"><button class="btn-primary" type="submit">Save general defaults</button></div>
+      </form>
+
+      <article class="panel hidden p-5 sm:p-7" data-settings-panel="virtualization">
+        <div class="flex items-start justify-between gap-4 border-b border-white/[.07] pb-5">
+          <div><h2 class="text-xl font-extralight text-white">Virtualization runtime</h2><p class="mt-1 text-sm text-slate-400">Read-only runtime details detected from this node.</p></div>
+          <span class="badge border-slate-300/20 text-slate-300">Environment-owned</span>
+        </div>
+        <div class="mt-6 grid gap-3 sm:grid-cols-2">
+          <div class="rounded-xl border border-white/[.07] bg-white/[.025] p-4"><p class="label">Libvirt connection</p><code id="settings-runtime-libvirt" class="text-sm text-orbit-300">Loading…</code></div>
+          <div class="rounded-xl border border-white/[.07] bg-white/[.025] p-4"><p class="label">Backend selection</p><code id="settings-runtime-backend" class="text-sm text-orbit-300">Loading…</code></div>
+          <div class="rounded-xl border border-white/[.07] bg-white/[.025] p-4"><p class="label">Default bridge</p><code id="settings-runtime-bridge" class="text-sm text-orbit-300">Loading…</code></div>
+          <div class="rounded-xl border border-white/[.07] bg-white/[.025] p-4"><p class="label">Console relay</p><code id="settings-runtime-console" class="text-sm text-orbit-300">Loading…</code></div>
+        </div>
+        <p class="mt-5 text-sm leading-6 text-slate-500">These values are shown for troubleshooting only. Change host-owned runtime configuration in the service environment file, validate host access, then restart the service.</p>
+      </article>
+
+      <article class="panel hidden p-5 sm:p-7" data-settings-panel="storage">
+        <div class="flex items-start justify-between gap-4 border-b border-white/[.07] pb-5">
+          <div><h2 class="text-xl font-extralight text-white">Storage roots</h2><p class="mt-1 text-sm text-slate-400">Canonical roots constrain every image and disk operation.</p></div>
+          <span class="badge border-amber-300/20 text-amber-200">Environment-owned</span>
+        </div>
+        <dl class="mt-6 space-y-3 text-sm">
+          <div class="flex flex-col justify-between gap-1 rounded-xl border border-white/[.07] p-4 sm:flex-row"><dt class="text-slate-500">Virtual machine disks</dt><dd id="settings-runtime-vm-storage" class="font-mono text-orbit-300">Loading…</dd></div>
+          <div class="flex flex-col justify-between gap-1 rounded-xl border border-white/[.07] p-4 sm:flex-row"><dt class="text-slate-500">Images and ISOs</dt><dd id="settings-runtime-iso-storage" class="font-mono text-orbit-300">Loading…</dd></div>
+          <div class="flex flex-col justify-between gap-1 rounded-xl border border-white/[.07] p-4 sm:flex-row"><dt class="text-slate-500">Cloud-init seeds</dt><dd id="settings-runtime-cloud-init-storage" class="font-mono text-orbit-300">Loading…</dd></div>
+        </dl>
+        <p class="mt-5 text-sm leading-6 text-slate-500">Backups use SQLite’s online backup command plus the encryption key and VM storage, as documented in the installation guide. This release does not present an inert “backup completed” control.</p>
+      </article>
+
+      <form class="panel hidden p-5 sm:p-7" data-settings-panel="network" data-settings-form="network">
+        <div class="border-b border-white/[.07] pb-5"><h2 class="text-xl font-extralight text-white">New-VM network defaults</h2><p class="mt-1 text-sm text-slate-400">Applied when a create request omits the corresponding value.</p></div>
+        <div class="mt-6 grid gap-5 sm:grid-cols-2">
+          <label><span class="label">Default bridge</span><input name="default_bridge" class="field font-mono" maxlength="15" required></label>
+          <label><span class="label">Default port speed (Mbit/s)</span><input name="default_port_limit_mbps" type="number" min="1" max="100000" class="field" required></label>
+          <label><span class="label">Default traffic allowance (GiB)</span><input name="default_traffic_quota_gb" type="number" min="0" class="field"><span class="mt-1.5 block text-xs text-slate-600">0 means unlimited. Positive values disable VM networking after the allowance is exceeded.</span></label>
+          <label class="sm:col-span-2"><span class="label">Default DNS servers</span><textarea name="dns_servers" class="field min-h-24 resize-y font-mono" placeholder="One IPv4 or IPv6 address per line"></textarea></label>
+        </div>
+        <div class="mt-6 flex justify-end"><button class="btn-primary" type="submit">Save network defaults</button></div>
+      </form>
+
+      <article class="panel hidden p-5 sm:p-7" data-settings-panel="network" id="host-network-security-panel">
+        <div class="border-b border-white/[.07] pb-5"><h2 class="text-xl font-extralight text-white">Hypervisor anti-spoofing</h2><p class="mt-1 text-sm text-slate-400">BCP38 source filtering is host-only and cannot be changed from customer status links.</p></div>
+        <label class="mt-6 flex items-start gap-3 rounded-xl border border-amber-300/20 bg-amber-300/[.05] p-4"><input id="bcp38-enabled" type="checkbox" class="mt-0.5 h-4 w-4"><span><span class="block text-sm font-normal text-slate-200">Enable BCP38 for guest egress traffic</span><span class="mt-1 block text-xs leading-5 text-slate-500">Pins each TAP to its configured source MAC and drops unassigned IPv4/IPv6 sources. Off by default; leave it off on low-end nodes unless anti-spoofing is required.</span></span></label>
+        <p id="bcp38-state" class="mt-4 text-xs text-slate-500">Loading host filter state…</p>
+        <div class="mt-6 flex justify-end"><button id="save-bcp38" type="button" class="btn-primary">Apply host policy</button></div>
+      </article>
+
+      <form class="panel hidden p-5 sm:p-7" data-settings-panel="console" data-settings-form="console">
+        <div class="border-b border-white/[.07] pb-5"><h2 class="text-xl font-extralight text-white">Console policy</h2><p class="mt-1 text-sm text-slate-400">All VNC tokens are one-time, scoped to one VM, and expire after exactly ten minutes.</p></div>
+        <label class="mt-6 flex items-start gap-3 rounded-xl border border-white/[.07] bg-white/[.025] p-4">
+          <input name="vnc_enabled" type="checkbox" class="mt-0.5 h-4 w-4">
+          <span><span class="block text-sm font-normal text-slate-200">Allow VNC sessions</span><span class="mt-1 block text-xs text-slate-500">Disabling this blocks new links and promptly closes active console relays.</span></span>
+        </label>
+        <div class="mt-6 flex justify-end"><button class="btn-primary" type="submit">Save console policy</button></div>
+      </form>
+
+      <div class="hidden space-y-6" data-settings-panel="security" id="security">
+        <form class="panel p-5 sm:p-7" data-settings-form="security">
+          <div class="border-b border-white/[.07] pb-5"><h2 class="text-xl font-extralight text-white">Runtime security limits</h2><p class="mt-1 text-sm text-slate-400">Rate limits apply immediately; session lifetime applies when a new session is issued.</p></div>
+          <div class="mt-6 grid gap-5 sm:grid-cols-3">
+            <label><span class="label">Session lifetime (minutes)</span><input name="session_lifetime_minutes" type="number" min="5" max="1440" class="field"></label>
+            <label><span class="label">Login attempts / 15 min</span><input name="login_rate_limit" type="number" min="1" max="1000" class="field"></label>
+            <label><span class="label">API calls / minute</span><input name="api_rate_limit" type="number" min="10" max="100000" class="field"></label>
+          </div>
+          <p class="mt-4 text-xs leading-5 text-slate-600">HSTS follows the configured HTTPS public URL. Forwarded client IPs are trusted only from a loopback reverse proxy. Per-key CIDR allowlists are configured when creating API keys.</p>
+          <div class="mt-6 flex justify-end"><button class="btn-primary" type="submit">Save security limits</button></div>
+        </form>
+
+        <form id="account-form" class="panel p-5 sm:p-7">
+          <div class="border-b border-white/[.07] pb-5"><h2 class="text-xl font-extralight text-white">Administrator account</h2><p class="mt-1 text-sm text-slate-400">Changing credentials revokes this administrator’s existing panel sessions.</p></div>
+          <div class="mt-6 grid gap-5 sm:grid-cols-2">
+            <label><span class="label">Username</span><input name="username" class="field" autocomplete="username"></label><div></div>
+            <label><span class="label">Current password</span><input name="current_password" type="password" class="field" autocomplete="current-password" required></label><div></div>
+            <label><span class="label">New password</span><input name="new_password" type="password" minlength="12" class="field" autocomplete="new-password"></label>
+            <label><span class="label">Confirm new password</span><input name="confirm_password" type="password" minlength="12" class="field" autocomplete="new-password"></label>
+          </div>
+          <div class="mt-6 flex justify-end"><button class="btn-primary" type="submit">Update account</button></div>
+        </form>
+
+        <article class="panel p-5 sm:p-7" id="administrator-management">
+          <div class="flex flex-col gap-4 border-b border-white/[.07] pb-5 sm:flex-row sm:items-center sm:justify-between">
+            <div><h2 class="text-xl font-extralight text-white">Administrators &amp; access levels</h2><p class="mt-1 text-sm text-slate-400">Create individual panel accounts, assign a fixed role, or immediately disable access.</p></div>
+            <button type="button" class="btn-primary shrink-0" data-open-admin-dialog>Create administrator</button>
+          </div>
+          <div class="mt-5 grid gap-3 text-xs leading-5 text-slate-500 sm:grid-cols-3">
+            <p class="rounded-xl border border-white/[.07] p-3"><span class="block font-normal text-plasma-200">Super administrator</span>Full access, including administrator accounts and signed activation approval.</p>
+            <p class="rounded-xl border border-white/[.07] p-3"><span class="block font-normal text-orbit-200">Administrator</span>Manages VMs, networking, images, settings, API keys and operations.</p>
+            <p class="rounded-xl border border-white/[.07] p-3"><span class="block font-normal text-slate-300">Read-only auditor</span>Can inspect the node, inventory, settings, jobs and audit records without changes.</p>
+          </div>
+          <div id="admins-loading" class="mt-5 space-y-3"><div class="skeleton h-20"></div><div class="skeleton h-20"></div></div>
+          <div id="admins-list" class="mt-3 divide-y divide-white/[.06]"></div>
+          <div id="admins-empty" class="mt-5 hidden rounded-xl border border-dashed border-white/10 p-8 text-center text-sm text-slate-400">No administrator accounts were returned.</div>
+          <p id="admins-read-only" class="mt-4 hidden text-xs leading-5 text-slate-500">Your role can inspect administrator accounts but cannot create, change, disable or delete them.</p>
+        </article>
+
+        <article class="panel p-5 sm:p-7">
+          <div class="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between"><div><h2 class="text-xl font-extralight text-white">Credential encryption</h2><p id="encryption-key-status" class="mt-1 text-sm text-slate-400">A host-managed AES-256-GCM key protects recoverable guest credentials; key material is never exposed to the panel.</p></div><span class="badge border-amber-300/20 text-amber-200">Offline operation</span></div>
+          <p class="mt-4 text-xs leading-5 text-slate-600">Back up the key separately from SQLite. Rotation requires a maintenance window and offline re-encryption; the remote API cannot trigger it.</p>
+        </article>
+      </div>
+
+      <article class="panel hidden p-5 sm:p-7" data-settings-panel="updates">
+        <div class="flex flex-col gap-4 border-b border-white/[.07] pb-5 sm:flex-row sm:items-center sm:justify-between">
+          <div><h2 class="text-xl font-extralight text-white">Signed component updates</h2><p class="mt-1 text-sm text-slate-400">Checks only the pinned <span class="font-mono">ItzGlace/vaxa-vm</span> release feed. Nothing installs before a super administrator selects components and accepts maintenance impact.</p></div>
+          <button id="check-updates" type="button" class="btn-primary shrink-0">Check signed release</button>
+        </div>
+        <div id="updates-disabled" class="mt-5 hidden rounded-xl border border-amber-300/20 bg-amber-300/[.07] p-4 text-sm leading-6 text-amber-100"></div>
+        <dl class="mt-5 grid gap-3 sm:grid-cols-2">
+          <div class="rounded-xl border border-white/[.07] p-4"><dt class="label">Installed</dt><dd id="updates-current" class="font-mono text-sm text-orbit-300">Loading…</dd></div>
+          <div class="rounded-xl border border-white/[.07] p-4"><dt class="label">Verified release</dt><dd id="updates-latest" class="font-mono text-sm text-orbit-300">Not checked</dd></div>
+          <div class="rounded-xl border border-white/[.07] p-4"><dt class="label">Signature</dt><dd id="updates-signer" class="break-all font-mono text-xs text-slate-300">Not checked</dd></div>
+          <div class="rounded-xl border border-white/[.07] p-4"><dt class="label">Privileged executor</dt><dd id="updates-executor" class="text-sm text-slate-300">Checking…</dd></div>
+          <div class="rounded-xl border border-white/[.07] p-4 sm:col-span-2"><dt class="label">Latest executor operation</dt><dd id="updates-executor-state" class="text-sm text-slate-300">No operation has been recorded.</dd></div>
+        </dl>
+        <div id="updates-components" class="mt-5 space-y-3"></div>
+        <div id="updates-approval" class="mt-6 hidden rounded-xl border border-amber-300/20 bg-amber-300/[.07] p-4">
+          <label class="flex items-start gap-3"><input id="updates-maintenance" type="checkbox" class="mt-1 h-4 w-4"><span><span class="block text-sm font-normal text-slate-200">I accept the displayed maintenance impact</span><span class="mt-1 block text-xs leading-5 text-slate-500">Running guests may be affected by QEMU/libvirt package changes. Vexa-VM uses a versioned install, health checks and automatic application rollback.</span></span></label>
+          <div class="mt-4 flex justify-end"><button id="approve-update" type="button" class="btn-primary" disabled>Approve selected update</button></div>
+        </div>
+        <p id="updates-state" class="mt-4 text-xs leading-5 text-slate-500">Release checks verify an Ed25519 signature and SHA-256 digests before any component can be selected.</p>
+        <div id="updates-rollback" class="mt-6 hidden rounded-xl border border-rose-300/20 bg-rose-300/[.07] p-4">
+          <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <div><h3 class="text-base font-normal text-rose-100">Application rollback available</h3><p class="mt-1 text-xs leading-5 text-slate-400">Restore <span id="updates-rollback-from" class="font-mono text-slate-300">—</span> to <span id="updates-rollback-to" class="font-mono text-slate-300">—</span> from the root-owned activation snapshot.</p></div>
+            <span id="updates-rollback-size" class="badge shrink-0 border-rose-300/20 text-rose-200">—</span>
+          </div>
+          <p id="updates-rollback-id" class="mt-3 break-all font-mono text-xs text-slate-600"></p>
+          <label class="mt-4 flex items-start gap-3"><input id="updates-rollback-maintenance" type="checkbox" class="mt-1 h-4 w-4"><span><span class="block text-sm font-normal text-slate-200">I accept the rollback maintenance impact</span><span class="mt-1 block text-xs leading-5 text-slate-500">The panel may restart while the privileged executor verifies and restores the previous application snapshot. Running guests remain under libvirt, but management access can be briefly unavailable.</span></span></label>
+          <div class="mt-4 flex justify-end"><button id="approve-rollback" type="button" class="btn-danger" disabled>Approve application rollback</button></div>
+        </div>
+      </article>
+
+      <div class="hidden" data-settings-panel="api">
+        <article class="panel p-5 sm:p-7">
+          <div class="flex flex-col gap-4 border-b border-white/[.07] pb-5 sm:flex-row sm:items-center sm:justify-between"><div><h2 class="text-xl font-extralight text-white">API keys</h2><p class="mt-1 text-sm text-slate-400">Scoped, expiring credentials with optional IPv4/IPv6 CIDR allowlists. Secrets are shown once.</p></div><button type="button" class="btn-primary" data-open-api-key-dialog>Create API key</button></div>
+          <div id="api-keys-loading" class="mt-5 space-y-3"><div class="skeleton h-16"></div><div class="skeleton h-16"></div></div>
+          <div id="api-keys-list" class="mt-3 divide-y divide-white/[.06]"></div>
+          <div id="api-keys-empty" class="mt-5 hidden rounded-xl border border-dashed border-white/10 p-8 text-center text-sm text-slate-400">No API keys have been created.</div>
+        </article>
+      </div>
+    </div>
+  </div>
+</section>
+
+<dialog id="admin-dialog" class="w-[min(34rem,calc(100%-2rem))] rounded-2xl border border-white/10 bg-slate-950 p-0 text-slate-100 shadow-2xl backdrop:bg-void/80 backdrop:backdrop-blur-sm">
+  <form id="admin-form" class="p-6">
+    <div class="flex items-start justify-between"><div><p class="text-[10px] uppercase tracking-[.22em] text-nebula-300">Panel access</p><h2 class="mt-1 text-xl font-extralight text-white">Create administrator</h2></div><button type="button" class="btn-secondary h-9 w-9 p-0" data-close-admin-dialog aria-label="Close">×</button></div>
+    <div class="mt-6 space-y-5">
+      <label><span class="label">Username</span><input name="username" class="field" required maxlength="128" autocomplete="off"></label>
+      <label><span class="label">Access level</span><select name="role" class="field" required><option value="admin">Administrator</option><option value="read_only">Read-only auditor</option><option value="super_admin">Super administrator</option></select></label>
+      <label><span class="label">Temporary password</span><input name="password" type="password" class="field" minlength="12" required autocomplete="new-password"></label>
+      <label><span class="label">Confirm password</span><input name="confirm_password" type="password" class="field" minlength="12" required autocomplete="new-password"></label>
+    </div>
+    <p id="admin-error" class="mt-4 hidden text-sm text-rose-300" role="alert"></p>
+    <div class="mt-6 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end"><button type="button" class="btn-secondary" data-close-admin-dialog>Cancel</button><button type="submit" class="btn-primary">Create account</button></div>
+  </form>
+</dialog>
+
+<dialog id="admin-password-dialog" class="w-[min(34rem,calc(100%-2rem))] rounded-2xl border border-white/10 bg-slate-950 p-0 text-slate-100 shadow-2xl backdrop:bg-void/80 backdrop:backdrop-blur-sm">
+  <form id="admin-password-form" class="p-6">
+    <div class="flex items-start justify-between"><div><p class="text-[10px] uppercase tracking-[.22em] text-nebula-300">Credential reset</p><h2 class="mt-1 text-xl font-extralight text-white">Set administrator password</h2><p id="admin-password-target" class="mt-2 text-sm text-slate-400"></p></div><button type="button" class="btn-secondary h-9 w-9 p-0" data-close-admin-password-dialog aria-label="Close">×</button></div>
+    <input name="admin_id" type="hidden">
+    <div class="mt-6 space-y-5">
+      <label><span class="label">New password</span><input name="password" type="password" class="field" minlength="12" required autocomplete="new-password"></label>
+      <label><span class="label">Confirm password</span><input name="confirm_password" type="password" class="field" minlength="12" required autocomplete="new-password"></label>
+    </div>
+    <p id="admin-password-error" class="mt-4 hidden text-sm text-rose-300" role="alert"></p>
+    <div class="mt-6 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end"><button type="button" class="btn-secondary" data-close-admin-password-dialog>Cancel</button><button type="submit" class="btn-primary">Set password &amp; revoke sessions</button></div>
+  </form>
+</dialog>
+
+<dialog id="api-key-dialog" class="w-[min(38rem,calc(100%-2rem))] rounded-2xl border border-white/10 bg-slate-950 p-0 text-slate-100 shadow-2xl backdrop:bg-void/80 backdrop:backdrop-blur-sm">
+  <form id="api-key-form" class="p-6">
+    <div class="flex items-start justify-between"><div><p class="text-[10px] uppercase tracking-[.22em] text-nebula-300">Automation access</p><h2 class="mt-1 text-xl font-extralight text-white">Create API key</h2></div><button type="button" class="btn-secondary h-9 w-9 p-0" data-close-api-key-dialog aria-label="Close">×</button></div>
+    <div class="mt-6 space-y-5">
+      <label><span class="label">Key name</span><input name="name" class="field" required maxlength="128" placeholder="Terraform production"></label>
+      <fieldset><legend class="label">Scopes</legend><div class="grid max-h-64 gap-2 overflow-y-auto pr-1 sm:grid-cols-2">
+        <label class="flex items-center gap-2 rounded-xl border border-white/[.07] p-3 text-sm"><input type="checkbox" name="scopes" value="host:read">Host status</label>
+        <label class="flex items-center gap-2 rounded-xl border border-white/[.07] p-3 text-sm"><input type="checkbox" name="scopes" value="vms:read">VM read</label>
+        <label class="flex items-center gap-2 rounded-xl border border-white/[.07] p-3 text-sm"><input type="checkbox" name="scopes" value="vms:write">VM metadata/resources</label>
+        <label class="flex items-center gap-2 rounded-xl border border-white/[.07] p-3 text-sm"><input type="checkbox" name="scopes" value="vms:power">VM power</label>
+        <label class="flex items-center gap-2 rounded-xl border border-white/[.07] p-3 text-sm"><input type="checkbox" name="scopes" value="vms:reinstall">VM reinstall</label>
+        <label class="flex items-center gap-2 rounded-xl border border-white/[.07] p-3 text-sm"><input type="checkbox" name="scopes" value="vms:vnc">VM console links</label>
+        <label class="flex items-center gap-2 rounded-xl border border-white/[.07] p-3 text-sm"><input type="checkbox" name="scopes" value="vms:password:read">Password reveal</label>
+        <label class="flex items-center gap-2 rounded-xl border border-white/[.07] p-3 text-sm"><input type="checkbox" name="scopes" value="vms:password:write">Password records</label>
+        <label class="flex items-center gap-2 rounded-xl border border-white/[.07] p-3 text-sm"><input type="checkbox" name="scopes" value="network:read">Network read</label>
+        <label class="flex items-center gap-2 rounded-xl border border-white/[.07] p-3 text-sm"><input type="checkbox" name="scopes" value="network:write">Network manage</label>
+        <label class="flex items-center gap-2 rounded-xl border border-white/[.07] p-3 text-sm"><input type="checkbox" name="scopes" value="isos:read">Image read</label>
+        <label class="flex items-center gap-2 rounded-xl border border-white/[.07] p-3 text-sm"><input type="checkbox" name="scopes" value="isos:write">Image manage</label>
+        <label class="flex items-center gap-2 rounded-xl border border-white/[.07] p-3 text-sm"><input type="checkbox" name="scopes" value="settings:read">Settings read</label>
+        <label class="flex items-center gap-2 rounded-xl border border-white/[.07] p-3 text-sm"><input type="checkbox" name="scopes" value="settings:write">Settings manage</label>
+        <label class="flex items-center gap-2 rounded-xl border border-white/[.07] p-3 text-sm"><input type="checkbox" name="scopes" value="admins:read">Administrator read</label>
+        <label class="flex items-center gap-2 rounded-xl border border-white/[.07] p-3 text-sm"><input type="checkbox" name="scopes" value="admins:write">Administrator manage</label>
+        <label class="flex items-center gap-2 rounded-xl border border-white/[.07] p-3 text-sm"><input type="checkbox" name="scopes" value="api_keys:read">API-key read</label>
+        <label class="flex items-center gap-2 rounded-xl border border-white/[.07] p-3 text-sm"><input type="checkbox" name="scopes" value="api_keys:write">API-key manage</label>
+        <label class="flex items-center gap-2 rounded-xl border border-white/[.07] p-3 text-sm"><input type="checkbox" name="scopes" value="audit:read">Audit read</label>
+        <label class="flex items-center gap-2 rounded-xl border border-white/[.07] p-3 text-sm"><input type="checkbox" name="scopes" value="updates:read">Update status</label>
+        <label class="flex items-center gap-2 rounded-xl border border-white/[.07] p-3 text-sm"><input type="checkbox" name="scopes" value="updates:write">Check/stage updates</label>
+        <label class="flex items-center gap-2 rounded-xl border border-white/[.07] p-3 text-sm"><input type="checkbox" name="scopes" value="jobs:read">Job read</label>
+        <label class="flex items-center gap-2 rounded-xl border border-white/[.07] p-3 text-sm"><input type="checkbox" name="scopes" value="jobs:write">Job cancellation</label>
+      </div></fieldset>
+      <label><span class="label">IP allowlist</span><textarea name="ip_allowlist" class="field min-h-20 font-mono" placeholder="Optional; one IPv4/IPv6 CIDR per line"></textarea></label>
+      <label><span class="label">Expires</span><input name="expires_at" type="datetime-local" class="field"></label>
+    </div>
+    <p id="api-key-error" class="mt-4 hidden text-sm text-rose-300" role="alert"></p>
+    <div class="mt-6 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end"><button type="button" class="btn-secondary" data-close-api-key-dialog>Cancel</button><button type="submit" class="btn-primary">Create key</button></div>
+  </form>
+</dialog>
+
+<dialog id="api-key-secret-dialog" class="w-[min(38rem,calc(100%-2rem))] rounded-2xl border border-white/10 bg-slate-950 p-0 text-slate-100 shadow-2xl backdrop:bg-void/80 backdrop:backdrop-blur-sm">
+  <div class="p-6"><p class="text-[10px] uppercase tracking-[.22em] text-emerald-300">Created successfully</p><h2 class="mt-1 text-xl font-extralight text-white">Copy your API key now</h2><p class="mt-2 text-sm leading-6 text-slate-400">This plaintext value will not be displayed again.</p><div class="mt-5 rounded-xl border border-emerald-300/20 bg-emerald-300/[.06] p-4"><code id="api-key-secret" class="block break-all font-mono text-sm text-emerald-100"></code><button type="button" class="btn-secondary mt-3" data-copy-api-key>Copy key</button></div><button type="button" class="btn-primary mt-6 w-full" data-close-api-key-secret>I saved the key</button></div>
+</dialog>
+{% endblock content %}

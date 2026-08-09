@@ -1,0 +1,12 @@
+[Unit]
+Description=Watch for approved Vexa-VM update requests
+Documentation=https://github.com/ItzGlace/vaxa-vm/blob/main/docs/UPDATES.md
+Requires=vexa-update-executor-ready.service
+After=vexa-update-executor-ready.service
+
+[Path]
+PathChanged=/var/lib/vexa-vm/updates/requests
+Unit=vexa-update-dispatch.service
+
+[Install]
+WantedBy=multi-user.target

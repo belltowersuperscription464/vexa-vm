@@ -1,0 +1,44 @@
+[Unit]
+Description=Vexa-VM KVM management panel
+Documentation=https://github.com/ItzGlace/vaxa-vm
+After=network-online.target libvirtd.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=vexa
+Group=vexa
+SupplementaryGroups=libvirt kvm
+EnvironmentFile=/etc/vexa-vm/vexa-vm.env
+WorkingDirectory=/opt/vexa-vm/current
+ExecStart=/opt/vexa-vm/current/bin/vexa-vm
+Restart=on-failure
+RestartSec=5s
+TimeoutStartSec=30s
+TimeoutStopSec=30s
+UMask=0027
+
+# The web service applies only Vexa-VM's fixed bridge-family nftables table.
+# CAP_NET_ADMIN is required for that netlink operation; keep every broader
+# administrative capability outside both the ambient and bounding sets.
+CapabilityBoundingSet=CAP_NET_ADMIN
+AmbientCapabilities=CAP_NET_ADMIN
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=false
+ProtectSystem=strict
+ProtectHome=true
+ProtectControlGroups=true
+ProtectKernelModules=true
+ProtectKernelTunables=true
+ProtectKernelLogs=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+RemoveIPC=true
+SystemCallArchitectures=native
+ReadWritePaths=/var/lib/vexa-vm /var/lib/libvirt/images/vexa-vm
+
+[Install]
+WantedBy=multi-user.target
