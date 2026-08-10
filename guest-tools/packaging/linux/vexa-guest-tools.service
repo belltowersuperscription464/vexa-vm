@@ -1,6 +1,6 @@
 [Unit]
 Description=Vexa Guest Tools
-Documentation=https://github.com/ItzGlace/vaxa-vm/tree/main/guest-tools
+Documentation=https://github.com/ItzGlace/vexa-vm/tree/main/guest-tools
 After=local-fs.target
 ConditionPathExists=/etc/vexa-guest-tools/config.json
 ConditionPathExists=/etc/vexa-guest-tools/secret

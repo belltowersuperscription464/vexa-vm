@@ -14,21 +14,21 @@ The service detects capabilities; it does not silently reconfigure the host's ph
 ## Single-command install
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/ItzGlace/vaxa-vm/main/install.sh | sudo bash
+curl -fsSL https://raw.githubusercontent.com/ItzGlace/vexa-vm/main/install.sh | sudo bash
 ```
 
 Useful environment overrides:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/ItzGlace/vaxa-vm/main/install.sh | \
-  sudo VEXA_VERSION=v0.1.2 VEXA_BIND=127.0.0.1:8080 VEXA_PUBLIC_URL=https://vm.example.com bash
+curl -fsSL https://raw.githubusercontent.com/ItzGlace/vexa-vm/main/install.sh | \
+  sudo VEXA_VERSION=v0.1.3 VEXA_BIND=127.0.0.1:8080 VEXA_PUBLIC_URL=https://vm.example.com bash
 ```
 
 To enable signed in-panel updates during bootstrap, pin the release publisher's raw 32-byte Ed25519
 public key and its published key ID through the root installer environment:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/ItzGlace/vaxa-vm/main/install.sh | \
+curl -fsSL https://raw.githubusercontent.com/ItzGlace/vexa-vm/main/install.sh | \
   sudo VEXA_UPDATE_KEY_ID=vexa-release-2026-01 \
   VEXA_UPDATE_PUBLIC_KEY_B64='BASE64_OF_RAW_32_BYTE_PUBLIC_KEY' bash
 ```
@@ -71,10 +71,10 @@ sudo apt-get install -y build-essential pkg-config libvirt-daemon-system qemu-kv
   virtinst cloud-image-utils sqlite3 nftables iproute2
 npm ci && npm run build
 cargo build --locked --release
-sudo install -Dm0755 target/release/vexa-vm /opt/vexa-vm/releases/0.1.2/bin/vexa-vm
+sudo install -Dm0755 target/release/vexa-vm /opt/vexa-vm/releases/0.1.3/bin/vexa-vm
 sudo install -Dm0755 target/release/vexa-update-helper \
-  /opt/vexa-vm/releases/0.1.2/bin/vexa-update-helper
-sudo ln -s releases/0.1.2 /opt/vexa-vm/current
+  /opt/vexa-vm/releases/0.1.3/bin/vexa-update-helper
+sudo ln -s releases/0.1.3 /opt/vexa-vm/current
 ```
 
 Copy `templates`, `static`, `migrations`, `deploy`, and `VERSION` into the same versioned release

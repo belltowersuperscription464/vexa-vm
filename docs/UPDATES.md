@@ -1,6 +1,6 @@
 # Signed updates
 
-Vexa-VM checks releases only in [`ItzGlace/vaxa-vm`](https://github.com/ItzGlace/vaxa-vm). An update
+Vexa-VM checks releases only in [`ItzGlace/vexa-vm`](https://github.com/ItzGlace/vexa-vm). An update
 check is read-only. It does not install a release, invoke a package manager, restart a service or
 change a VM. The updater trusts a release only when all of the following are true:
 
@@ -27,7 +27,7 @@ signing. Schema version 1 allows only `vexa-vm`, `qemu` and `libvirt` components
 ```json
 {
   "schema_version": 1,
-  "repository": "ItzGlace/vaxa-vm",
+  "repository": "ItzGlace/vexa-vm",
   "release": "1.2.3",
   "published_at": 1786000000,
   "components": [
@@ -36,7 +36,7 @@ signing. Schema version 1 allows only `vexa-vm`, `qemu` and `libvirt` components
       "version": "1.2.3",
       "delivery": {
         "type": "signed_archive",
-        "url": "https://github.com/ItzGlace/vaxa-vm/releases/download/v1.2.3/vexa-vm-x86_64-unknown-linux-gnu.tar.gz",
+        "url": "https://github.com/ItzGlace/vexa-vm/releases/download/v1.2.3/vexa-vm-x86_64-unknown-linux-gnu.tar.gz",
         "sha256": "REPLACE_WITH_64_LOWERCASE_HEX_CHARACTERS",
         "size_bytes": 12345678,
         "target": "x86_64-unknown-linux-gnu"

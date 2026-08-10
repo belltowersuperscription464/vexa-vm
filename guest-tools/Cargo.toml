@@ -3,11 +3,11 @@ members = ["crates/protocol", "crates/agent"]
 resolver = "2"
 
 [workspace.package]
-version = "0.1.2"
+version = "0.1.3"
 edition = "2021"
 rust-version = "1.75"
 license = "AGPL-3.0-or-later"
-repository = "https://github.com/ItzGlace/vaxa-vm"
+repository = "https://github.com/ItzGlace/vexa-vm"
 
 [workspace.dependencies]
 aes-gcm = "0.10.3"

@@ -35,7 +35,7 @@ use uuid::Uuid;
 
 use crate::error::{AppError, AppResult};
 
-pub const UPDATE_REPOSITORY: &str = "ItzGlace/vaxa-vm";
+pub const UPDATE_REPOSITORY: &str = "ItzGlace/vexa-vm";
 pub const RELEASE_MANIFEST_ASSET: &str = "vexa-vm-update-manifest.json";
 pub const RELEASE_SIGNATURE_ASSET: &str = "vexa-vm-update-manifest.json.sig";
 pub const UPDATE_REQUEST_ROOT: &str = "/var/lib/vexa-vm/updates/requests";
@@ -47,9 +47,8 @@ pub const UPDATE_TRUST_STORE_PATH: &str = "/etc/vexa-vm/update-trusted-keys.json
 pub const MAX_PRIVILEGED_REQUEST_BYTES: u64 = 2 * 1024 * 1024;
 pub const MAX_TRUST_STORE_BYTES: u64 = 64 * 1024;
 
-const RELEASE_API_URL: &str = "https://api.github.com/repos/ItzGlace/vaxa-vm/releases/latest";
-const RELEASES_API_URL: &str =
-    "https://api.github.com/repos/ItzGlace/vaxa-vm/releases?per_page=10";
+const RELEASE_API_URL: &str = "https://api.github.com/repos/ItzGlace/vexa-vm/releases/latest";
+const RELEASES_API_URL: &str = "https://api.github.com/repos/ItzGlace/vexa-vm/releases?per_page=10";
 const MAX_RELEASE_METADATA_BYTES: u64 = 512 * 1024;
 const MAX_MANIFEST_BYTES: u64 = 1024 * 1024;
 const MAX_SIGNATURE_BYTES: u64 = 4096;
@@ -213,8 +212,7 @@ pub fn read_durable_update_statuses() -> AppResult<Vec<DurableUpdateStatus>> {
             }
         }
         let mut bytes = Vec::with_capacity(file_metadata.len() as usize);
-        file.take(MAX_DURABLE_STATUS_BYTES + 1)
-            .read_to_end(&mut bytes)?;
+        file.take(MAX_DURABLE_STATUS_BYTES + 1).read_to_end(&mut bytes)?;
         if bytes.is_empty() || bytes.len() as u64 > MAX_DURABLE_STATUS_BYTES {
             return Err(AppError::Conflict("durable update status is invalid".into()));
         }
@@ -237,10 +235,7 @@ pub fn read_durable_update_statuses() -> AppResult<Vec<DurableUpdateStatus>> {
     Ok(statuses)
 }
 
-fn validate_durable_update_status(
-    status: &DurableUpdateStatus,
-    filename_request_id: &str,
-) -> AppResult<()> {
+fn validate_durable_update_status(status: &DurableUpdateStatus, filename_request_id: &str) -> AppResult<()> {
     if status.schema_version != 1
         || status.request_id != filename_request_id
         || status.progress_percent > 100
@@ -268,7 +263,10 @@ fn validate_durable_update_status(
         }
     }
     if let Some(operation) = status.operation.as_deref() {
-        if !matches!(operation, "activate" | "rollback" | "recover" | "recover_rollback") {
+        if !matches!(
+            operation,
+            "activate" | "rollback" | "recover" | "recover_rollback"
+        ) {
             return Err(AppError::Conflict(
                 "durable update operation is unsupported".into(),
             ));
@@ -284,14 +282,9 @@ fn validate_durable_update_status(
             || change.package.len() > 128
             || change.requested_version.is_empty()
             || change.requested_version.len() > 256
-            || change
-                .previous_version
-                .as_deref()
-                .is_some_and(|value| {
-                    value.is_empty()
-                        || value.len() > 256
-                        || value.chars().any(char::is_control)
-                })
+            || change.previous_version.as_deref().is_some_and(|value| {
+                value.is_empty() || value.len() > 256 || value.chars().any(char::is_control)
+            })
             || [&change.component, &change.package, &change.requested_version]
                 .into_iter()
                 .any(|value| value.chars().any(char::is_control))
@@ -314,8 +307,7 @@ fn validate_durable_update_status(
     if (status.rollback.succeeded && !status.rollback.attempted)
         || (status.rollback.attempted && !status.rollback.available)
         || status.rollback.available
-            != (status.rollback.previous_release.is_some()
-                && status.rollback.snapshot_sha256.is_some())
+            != (status.rollback.previous_release.is_some() && status.rollback.snapshot_sha256.is_some())
     {
         return Err(AppError::Conflict(
             "durable rollback state is inconsistent".into(),
@@ -330,10 +322,8 @@ fn validate_durable_update_status(
             || status.rollback.attempted
             || status.rollback.succeeded
             || status.release.as_deref() != Some(point.release.as_str())
-            || status.rollback.previous_release.as_deref()
-                != Some(point.previous_release.as_str())
-            || status.rollback.snapshot_sha256.as_deref()
-                != Some(point.snapshot_sha256.as_str())
+            || status.rollback.previous_release.as_deref() != Some(point.previous_release.as_str())
+            || status.rollback.snapshot_sha256.as_deref() != Some(point.snapshot_sha256.as_str())
             || point.snapshot_size_bytes == 0
             || point.snapshot_size_bytes > MAX_ROLLBACK_SNAPSHOT_BYTES
             || point.components.len() != 1
@@ -341,9 +331,7 @@ fn validate_durable_update_status(
             || validate_sha256(&point.manifest_sha256)? != point.manifest_sha256
             || validate_sha256(&point.snapshot_sha256)? != point.snapshot_sha256
         {
-            return Err(AppError::Conflict(
-                "durable rollback point is invalid".into(),
-            ));
+            return Err(AppError::Conflict("durable rollback point is invalid".into()));
         }
         ParsedVersion::parse(&point.release)?;
         ParsedVersion::parse(&point.previous_release)?;
@@ -436,9 +424,7 @@ impl TrustedReleaseKeys {
         for (key_id, encoded) in keys {
             validate_identifier("release signing key ID", &key_id, 128)?;
             let key = BASE64.decode(encoded.trim()).map_err(|_| {
-                AppError::Configuration(format!(
-                    "release signing key {key_id} is not valid base64"
-                ))
+                AppError::Configuration(format!("release signing key {key_id} is not valid base64"))
             })?;
             if key.len() != 32 {
                 return Err(AppError::Configuration(format!(
@@ -671,10 +657,7 @@ pub fn load_fixed_trusted_release_keys() -> AppResult<TrustedReleaseKeys> {
     }
     let file = options.open(UPDATE_TRUST_STORE_PATH)?;
     let metadata = file.metadata()?;
-    if !metadata.file_type().is_file()
-        || metadata.len() == 0
-        || metadata.len() > MAX_TRUST_STORE_BYTES
-    {
+    if !metadata.file_type().is_file() || metadata.len() == 0 || metadata.len() > MAX_TRUST_STORE_BYTES {
         return Err(AppError::Configuration(
             "release trust store is not a bounded regular file".into(),
         ));
@@ -828,11 +811,7 @@ impl PrivilegedRequestSpool {
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
-            tokio::fs::set_permissions(
-                &self.root,
-                std::fs::Permissions::from_mode(0o700),
-            )
-            .await?;
+            tokio::fs::set_permissions(&self.root, std::fs::Permissions::from_mode(0o700)).await?;
         }
         let root = tokio::fs::canonicalize(&self.root).await?;
         if !tokio::fs::metadata(&root).await?.is_dir() {
@@ -958,27 +937,21 @@ impl UpdateCoordinator {
             current_version: state.current_version.clone(),
             checked_at: state.checked_at,
             release: state.release.clone(),
-            staged: state
-                .staged
-                .values()
-                .map(StagedComponentStatus::from)
-                .collect(),
+            staged: state.staged.values().map(StagedComponentStatus::from).collect(),
             last_queued_request_id: state.last_queued_request_id.clone(),
         }
     }
 
-    pub async fn check_latest(
-        &self,
-        current_version: &str,
-    ) -> AppResult<UpdateCheck> {
+    pub async fn check_latest(&self, current_version: &str) -> AppResult<UpdateCheck> {
         let checked_at = current_unix_time()?;
         let _operation = self.operation_lock.lock().await;
         let check = self.updater.check_latest(current_version).await?;
         let stale = {
             let mut state = self.state.write().await;
-            let release_changed = state.release.as_ref().is_some_and(|release| {
-                release.manifest_sha256 != check.release.manifest_sha256
-            });
+            let release_changed = state
+                .release
+                .as_ref()
+                .is_some_and(|release| release.manifest_sha256 != check.release.manifest_sha256);
             let stale = if release_changed {
                 std::mem::take(&mut state.staged)
             } else {
@@ -1189,7 +1162,7 @@ impl ReleaseUpdater {
         } else {
             RELEASE_API_URL
         })
-            .map_err(|_| AppError::Internal("release API URL is invalid".into()))?;
+        .map_err(|_| AppError::Internal("release API URL is invalid".into()))?;
         let metadata = self
             .fetch_bounded(api_url, MAX_RELEASE_METADATA_BYTES, UrlPurpose::Api)
             .await?;
@@ -1210,7 +1183,9 @@ impl ReleaseUpdater {
                 .map_err(|_| AppError::Conflict("GitHub release metadata was invalid".into()))?
         };
         if release.draft {
-            return Err(AppError::Conflict("the latest GitHub release is still a draft".into()));
+            return Err(AppError::Conflict(
+                "the latest GitHub release is still a draft".into(),
+            ));
         }
         if release.prerelease && !self.allow_prereleases {
             return Err(AppError::Conflict(
@@ -1223,10 +1198,14 @@ impl ReleaseUpdater {
         let manifest_asset = required_asset(&release.assets, RELEASE_MANIFEST_ASSET)?;
         let signature_asset = required_asset(&release.assets, RELEASE_SIGNATURE_ASSET)?;
         if manifest_asset.size > MAX_MANIFEST_BYTES || signature_asset.size > MAX_SIGNATURE_BYTES {
-            return Err(AppError::Conflict("release verification assets are unexpectedly large".into()));
+            return Err(AppError::Conflict(
+                "release verification assets are unexpectedly large".into(),
+            ));
         }
-        let manifest_url = validate_release_asset_url(&manifest_asset.browser_download_url, &release.tag_name)?;
-        let signature_url = validate_release_asset_url(&signature_asset.browser_download_url, &release.tag_name)?;
+        let manifest_url =
+            validate_release_asset_url(&manifest_asset.browser_download_url, &release.tag_name)?;
+        let signature_url =
+            validate_release_asset_url(&signature_asset.browser_download_url, &release.tag_name)?;
         if asset_filename(&manifest_url) != Some(RELEASE_MANIFEST_ASSET)
             || asset_filename(&signature_url) != Some(RELEASE_SIGNATURE_ASSET)
         {
@@ -1322,13 +1301,7 @@ impl ReleaseUpdater {
         let mut cleanup = StagedFileCleanup::new(&partial_path, &final_path);
 
         let (size_bytes, sha256) = self
-            .download_artifact(
-                url,
-                &partial_path,
-                &final_path,
-                expected_size,
-                &expected_sha256,
-            )
+            .download_artifact(url, &partial_path, &final_path, expected_size, &expected_sha256)
             .await?;
         cleanup.retain();
         Ok(StagedArtifact {
@@ -1396,9 +1369,7 @@ impl ReleaseUpdater {
     ) -> AppResult<ActivationRequest> {
         validate_identifier("approving administrator", &approval.approved_by, 256)?;
         if approval.approved_at <= 0 {
-            return Err(AppError::Validation(
-                "update approval time is invalid".into(),
-            ));
+            return Err(AppError::Validation("update approval time is invalid".into()));
         }
         if !approval.maintenance_impact_accepted {
             return Err(AppError::Validation(
@@ -1490,15 +1461,11 @@ impl ReleaseUpdater {
         validate_identifier("approving administrator", &approval.approved_by, 256)?;
         validate_uuid("activation ID", &point.activation_id)?;
         if approval.approved_at <= 0 {
-            return Err(AppError::Validation(
-                "rollback approval time is invalid".into(),
-            ));
+            return Err(AppError::Validation("rollback approval time is invalid".into()));
         }
         validate_sha256(&point.manifest_sha256)?;
         validate_sha256(&point.snapshot_sha256)?;
-        if point.snapshot_size_bytes == 0
-            || point.snapshot_size_bytes > MAX_ROLLBACK_SNAPSHOT_BYTES
-        {
+        if point.snapshot_size_bytes == 0 || point.snapshot_size_bytes > MAX_ROLLBACK_SNAPSHOT_BYTES {
             return Err(AppError::Validation(
                 "rollback snapshot is outside the supported size limit".into(),
             ));
@@ -1559,7 +1526,9 @@ impl ReleaseUpdater {
     async fn fetch_bounded(&self, url: Url, maximum: u64, purpose: UrlPurpose) -> AppResult<Vec<u8>> {
         let response = self.follow_redirects(url, purpose).await?;
         if response.content_length().is_some_and(|size| size > maximum) {
-            return Err(AppError::Conflict("release response exceeded its size limit".into()));
+            return Err(AppError::Conflict(
+                "release response exceeded its size limit".into(),
+            ));
         }
         let mut bytes = Vec::new();
         let mut stream = response.bytes_stream();
@@ -1570,7 +1539,9 @@ impl ReleaseUpdater {
                 .checked_add(chunk.len() as u64)
                 .ok_or_else(|| AppError::Conflict("release response exceeded its size limit".into()))?;
             if received > maximum {
-                return Err(AppError::Conflict("release response exceeded its size limit".into()));
+                return Err(AppError::Conflict(
+                    "release response exceeded its size limit".into(),
+                ));
             }
             bytes.extend_from_slice(&chunk);
         }
@@ -1681,9 +1652,9 @@ impl ReleaseUpdater {
         tokio::fs::rename(partial_path, final_path).await?;
         // Do not report an artifact as staged until the directory entry is
         // durable. The helper may be woken immediately after approval.
-        let parent = final_path.parent().ok_or_else(|| {
-            AppError::Internal("staged update path has no parent directory".into())
-        })?;
+        let parent = final_path
+            .parent()
+            .ok_or_else(|| AppError::Internal("staged update path has no parent directory".into()))?;
         std::fs::File::open(parent)?.sync_all()?;
         Ok((size, sha256))
     }
@@ -1733,11 +1704,8 @@ pub async fn validate_privileged_request(
                     "activation request must contain between one and three actions".into(),
                 ));
             }
-            let manifest_bytes = decode_bounded_base64(
-                manifest_base64,
-                MAX_MANIFEST_BYTES,
-                "release manifest",
-            )?;
+            let manifest_bytes =
+                decode_bounded_base64(manifest_base64, MAX_MANIFEST_BYTES, "release manifest")?;
             let signature_bytes = decode_bounded_base64(
                 detached_signature_base64,
                 MAX_SIGNATURE_BYTES,
@@ -1935,9 +1903,7 @@ fn validate_approval_window(
     now: i64,
 ) -> AppResult<()> {
     if !maintenance_impact_accepted {
-        return Err(AppError::Validation(
-            "maintenance impact was not accepted".into(),
-        ));
+        return Err(AppError::Validation("maintenance impact was not accepted".into()));
     }
     if approved_at <= 0
         || expires_at != approved_at.saturating_add(UPDATE_APPROVAL_TTL_SECONDS)
@@ -2137,10 +2103,13 @@ fn validate_manifest(manifest: &UpdateManifest, expected_tag: &str) -> AppResult
                     ));
                 }
             }
-            (UpdateComponent::Qemu | UpdateComponent::Libvirt, ComponentDelivery::SystemPackages {
-                manager: PackageManager::Apt,
-                packages,
-            }) => validate_system_packages(component.component, packages)?,
+            (
+                UpdateComponent::Qemu | UpdateComponent::Libvirt,
+                ComponentDelivery::SystemPackages {
+                    manager: PackageManager::Apt,
+                    packages,
+                },
+            ) => validate_system_packages(component.component, packages)?,
             (UpdateComponent::VexaVm, ComponentDelivery::SystemPackages { .. }) => {
                 return Err(AppError::Conflict(
                     "Vexa-VM must be delivered as a signed release archive".into(),
@@ -2158,16 +2127,15 @@ fn validate_manifest(manifest: &UpdateManifest, expected_tag: &str) -> AppResult
 
 fn validate_manifest_assets(manifest: &UpdateManifest, assets: &[GitHubAsset]) -> AppResult<()> {
     for component in &manifest.components {
-        let ComponentDelivery::SignedArchive {
-            url, size_bytes, ..
-        } = &component.delivery
-        else {
+        let ComponentDelivery::SignedArchive { url, size_bytes, .. } = &component.delivery else {
             continue;
         };
         let asset = assets
             .iter()
             .find(|asset| asset.browser_download_url == *url)
-            .ok_or_else(|| AppError::Conflict("signed archive is not attached to the GitHub release".into()))?;
+            .ok_or_else(|| {
+                AppError::Conflict("signed archive is not attached to the GitHub release".into())
+            })?;
         if asset.size != *size_bytes {
             return Err(AppError::Conflict(
                 "GitHub asset size does not match the signed manifest".into(),
@@ -2283,12 +2251,13 @@ fn validate_sha256(value: &str) -> AppResult<String> {
 }
 
 fn required_asset<'a>(assets: &'a [GitHubAsset], name: &str) -> AppResult<&'a GitHubAsset> {
-    let matches = assets.iter().filter(|asset| asset.name == name).collect::<Vec<_>>();
+    let matches = assets
+        .iter()
+        .filter(|asset| asset.name == name)
+        .collect::<Vec<_>>();
     match matches.as_slice() {
         [asset] => Ok(*asset),
-        [] => Err(AppError::Conflict(format!(
-            "GitHub release is missing {name}"
-        ))),
+        [] => Err(AppError::Conflict(format!("GitHub release is missing {name}"))),
         _ => Err(AppError::Conflict(format!(
             "GitHub release contains duplicate {name} assets"
         ))),
@@ -2316,12 +2285,13 @@ fn validate_github_url(url: &Url, purpose: UrlPurpose) -> AppResult<()> {
     let allowed = match purpose {
         UrlPurpose::Api => {
             host == "api.github.com"
-                && ((url.path() == "/repos/ItzGlace/vaxa-vm/releases/latest"
-                    && url.query().is_none())
-                    || (url.path() == "/repos/ItzGlace/vaxa-vm/releases"
+                && ((url.path() == "/repos/ItzGlace/vexa-vm/releases/latest" && url.query().is_none())
+                    || (url.path() == "/repos/ItzGlace/vexa-vm/releases"
                         && url.query() == Some("per_page=10")))
         }
-        UrlPurpose::Asset => host == "github.com" && url.path().starts_with("/ItzGlace/vaxa-vm/releases/download/"),
+        UrlPurpose::Asset => {
+            host == "github.com" && url.path().starts_with("/ItzGlace/vexa-vm/releases/download/")
+        }
         UrlPurpose::Redirect => matches!(
             host,
             "github.com"
@@ -2341,7 +2311,7 @@ fn validate_github_url(url: &Url, purpose: UrlPurpose) -> AppResult<()> {
 fn validate_release_asset_url(value: &str, expected_tag: &str) -> AppResult<Url> {
     let url = Url::parse(value).map_err(|_| AppError::Conflict("release asset URL is invalid".into()))?;
     validate_github_url(&url, UrlPurpose::Asset)?;
-    let expected_prefix = format!("/ItzGlace/vaxa-vm/releases/download/{expected_tag}/");
+    let expected_prefix = format!("/ItzGlace/vexa-vm/releases/download/{expected_tag}/");
     let filename = url.path().strip_prefix(&expected_prefix).unwrap_or_default();
     if filename.is_empty()
         || filename.len() > 255
@@ -2363,7 +2333,7 @@ fn asset_filename(url: &Url) -> Option<&str> {
 
 fn validate_release_page_url(value: &str, expected_tag: &str) -> AppResult<()> {
     let url = Url::parse(value).map_err(|_| AppError::Conflict("release page URL is invalid".into()))?;
-    let expected_path = format!("/ItzGlace/vaxa-vm/releases/tag/{expected_tag}");
+    let expected_path = format!("/ItzGlace/vexa-vm/releases/tag/{expected_tag}");
     if url.scheme() != "https"
         || url.host_str() != Some("github.com")
         || url.port_or_known_default() != Some(443)
@@ -2373,7 +2343,9 @@ fn validate_release_page_url(value: &str, expected_tag: &str) -> AppResult<()> {
         || !url.username().is_empty()
         || url.password().is_some()
     {
-        return Err(AppError::Conflict("release page URL is outside the repository".into()));
+        return Err(AppError::Conflict(
+            "release page URL is outside the repository".into(),
+        ));
     }
     Ok(())
 }
@@ -2403,9 +2375,7 @@ async fn hash_file(path: &Path, maximum: u64) -> AppResult<(u64, String)> {
             .checked_add(read as u64)
             .ok_or_else(|| AppError::Conflict("staged update artifact is too large".into()))?;
         if size > maximum {
-            return Err(AppError::Conflict(
-                "staged update artifact is too large".into(),
-            ));
+            return Err(AppError::Conflict("staged update artifact is too large".into()));
         }
         digest.update(&buffer[..read]);
     }
@@ -2540,13 +2510,11 @@ impl ParsedVersion {
                             "release version {value} is not valid semantic versioning"
                         )));
                     }
-                    parsed_prerelease.push(VersionIdentifier::Numeric(identifier.parse().map_err(
-                        |_| {
-                            AppError::Conflict(format!(
-                                "release version {value} is not valid semantic versioning"
-                            ))
-                        },
-                    )?));
+                    parsed_prerelease.push(VersionIdentifier::Numeric(identifier.parse().map_err(|_| {
+                        AppError::Conflict(format!(
+                            "release version {value} is not valid semantic versioning"
+                        ))
+                    })?));
                 } else {
                     parsed_prerelease.push(VersionIdentifier::Text(identifier.into()));
                 }
@@ -2561,14 +2529,13 @@ impl ParsedVersion {
 
 impl Ord for ParsedVersion {
     fn cmp(&self, other: &Self) -> Ordering {
-        self.core.cmp(&other.core).then_with(|| match (
-            self.prerelease.is_empty(),
-            other.prerelease.is_empty(),
-        ) {
-            (true, true) => Ordering::Equal,
-            (true, false) => Ordering::Greater,
-            (false, true) => Ordering::Less,
-            (false, false) => compare_prerelease(&self.prerelease, &other.prerelease),
+        self.core.cmp(&other.core).then_with(|| {
+            match (self.prerelease.is_empty(), other.prerelease.is_empty()) {
+                (true, true) => Ordering::Equal,
+                (true, false) => Ordering::Greater,
+                (false, true) => Ordering::Less,
+                (false, false) => compare_prerelease(&self.prerelease, &other.prerelease),
+            }
         })
     }
 }
@@ -2613,7 +2580,7 @@ mod tests {
                     component: UpdateComponent::VexaVm,
                     version: "1.2.3".into(),
                     delivery: ComponentDelivery::SignedArchive {
-                        url: "https://github.com/ItzGlace/vaxa-vm/releases/download/v1.2.3/vexa-vm-x86_64-unknown-linux-gnu.tar.gz".into(),
+                        url: "https://github.com/ItzGlace/vexa-vm/releases/download/v1.2.3/vexa-vm-x86_64-unknown-linux-gnu.tar.gz".into(),
                         sha256: format!("{:x}", Sha256::digest(artifact)),
                         size_bytes: artifact.len() as u64,
                         target: target.into(),
@@ -2640,11 +2607,9 @@ mod tests {
             "signature": BASE64.encode(signature.as_ref()),
         }))
         .unwrap();
-        let trust = TrustedReleaseKeys::new([(
-            "test-2026".into(),
-            BASE64.encode(key_pair.public_key().as_ref()),
-        )])
-        .unwrap();
+        let trust =
+            TrustedReleaseKeys::new([("test-2026".into(), BASE64.encode(key_pair.public_key().as_ref()))])
+                .unwrap();
         (manifest_bytes, signature_bytes, trust)
     }
 
@@ -2687,53 +2652,49 @@ mod tests {
     fn semantic_versions_are_compared_correctly() {
         assert!(ParsedVersion::parse("1.2.4").unwrap() > ParsedVersion::parse("v1.2.3").unwrap());
         assert!(ParsedVersion::parse("1.2.3").unwrap() > ParsedVersion::parse("1.2.3-rc.1").unwrap());
-        assert!(ParsedVersion::parse("1.2.3-rc.10").unwrap()
-            > ParsedVersion::parse("1.2.3-rc.2").unwrap());
+        assert!(ParsedVersion::parse("1.2.3-rc.10").unwrap() > ParsedVersion::parse("1.2.3-rc.2").unwrap());
         assert!(ParsedVersion::parse("1.02.3").is_err());
     }
 
     #[test]
     fn github_asset_urls_are_repository_and_tag_bound() {
+        assert!(validate_github_url(&Url::parse(RELEASE_API_URL).unwrap(), UrlPurpose::Api).is_ok());
+        assert!(validate_github_url(&Url::parse(RELEASES_API_URL).unwrap(), UrlPurpose::Api).is_ok());
         assert!(validate_github_url(
-            &Url::parse(RELEASE_API_URL).unwrap(),
-            UrlPurpose::Api
-        )
-        .is_ok());
-        assert!(validate_github_url(
-            &Url::parse(RELEASES_API_URL).unwrap(),
-            UrlPurpose::Api
-        )
-        .is_ok());
-        assert!(validate_github_url(
-            &Url::parse("https://api.github.com/repos/ItzGlace/vaxa-vm/releases?per_page=100")
-                .unwrap(),
+            &Url::parse("https://api.github.com/repos/ItzGlace/vexa-vm/releases?per_page=100").unwrap(),
             UrlPurpose::Api
         )
         .is_err());
         assert!(validate_release_asset_url(
-            "https://github.com/ItzGlace/vaxa-vm/releases/download/v1.2.3/archive.tar.gz",
+            "https://github.com/ItzGlace/vexa-vm/releases/download/v1.2.3/archive.tar.gz",
             "v1.2.3"
         )
         .is_ok());
         for url in [
-            "http://github.com/ItzGlace/vaxa-vm/releases/download/v1.2.3/archive.tar.gz",
-            "https://evil.example/ItzGlace/vaxa-vm/releases/download/v1.2.3/archive.tar.gz",
+            "http://github.com/ItzGlace/vexa-vm/releases/download/v1.2.3/archive.tar.gz",
+            "https://evil.example/ItzGlace/vexa-vm/releases/download/v1.2.3/archive.tar.gz",
             "https://github.com/other/repo/releases/download/v1.2.3/archive.tar.gz",
-            "https://github.com/ItzGlace/vaxa-vm/releases/download/v9.9.9/archive.tar.gz",
+            "https://github.com/ItzGlace/vexa-vm/releases/download/v9.9.9/archive.tar.gz",
         ] {
-            assert!(validate_release_asset_url(url, "v1.2.3").is_err(), "accepted {url}");
+            assert!(
+                validate_release_asset_url(url, "v1.2.3").is_err(),
+                "accepted {url}"
+            );
         }
         assert!(validate_release_page_url(
-            "https://github.com/ItzGlace/vaxa-vm/releases/tag/v1.2.3",
+            "https://github.com/ItzGlace/vexa-vm/releases/tag/v1.2.3",
             "v1.2.3"
         )
         .is_ok());
         for url in [
-            "https://github.com:444/ItzGlace/vaxa-vm/releases/tag/v1.2.3",
-            "https://github.com/ItzGlace/vaxa-vm/releases/tag/v1.2.3?download=1",
-            "https://github.com/ItzGlace/vaxa-vm/releases/tag/v1.2.3#assets",
+            "https://github.com:444/ItzGlace/vexa-vm/releases/tag/v1.2.3",
+            "https://github.com/ItzGlace/vexa-vm/releases/tag/v1.2.3?download=1",
+            "https://github.com/ItzGlace/vexa-vm/releases/tag/v1.2.3#assets",
         ] {
-            assert!(validate_release_page_url(url, "v1.2.3").is_err(), "accepted {url}");
+            assert!(
+                validate_release_page_url(url, "v1.2.3").is_err(),
+                "accepted {url}"
+            );
         }
     }
 
@@ -2796,9 +2757,7 @@ mod tests {
             )
             .await
             .unwrap();
-        let request = verified
-            .privileged_activation_request(activation)
-            .unwrap();
+        let request = verified.privileged_activation_request(activation).unwrap();
         let mut request_with_command = serde_json::to_value(&request).unwrap();
         request_with_command
             .as_object_mut()
@@ -2855,9 +2814,7 @@ mod tests {
         .await
         .is_err());
 
-        tokio::fs::write(&path, b"tampered after approval")
-            .await
-            .unwrap();
+        tokio::fs::write(&path, b"tampered after approval").await.unwrap();
         assert!(validate_privileged_request(
             &request,
             &trust,

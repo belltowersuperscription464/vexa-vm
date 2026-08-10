@@ -628,7 +628,7 @@ rewrite existing guests or host interfaces.
 | `POST` | `/api/v1/updates/approve` | `updates:write` plus `super_admin` browser session | Approve exact manifest/components and queue a 15-minute activation request for the privileged helper |
 | `POST` | `/api/v1/updates/rollback` | `updates:write` plus `super_admin` browser session | Explicitly approve the current server-published rollback point and queue a 15-minute rollback request |
 
-The update source is fixed to `ItzGlace/vaxa-vm`. A check retrieves bounded
+The update source is fixed to `ItzGlace/vexa-vm`. A check retrieves bounded
 GitHub release metadata, `vexa-vm-update-manifest.json`, and its detached
 Ed25519 signature. The manifest is accepted only when its repository, release,
 component definitions, asset URLs, signature, trusted key ID, and SHA-256

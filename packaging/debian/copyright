@@ -1,6 +1,6 @@
 Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
 Upstream-Name: vexa-vm
-Source: https://github.com/ItzGlace/vaxa-vm
+Source: https://github.com/ItzGlace/vexa-vm
 
 Files: *
 Copyright: 2026 Vexa-VM contributors

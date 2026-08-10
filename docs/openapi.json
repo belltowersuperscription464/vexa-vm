@@ -1147,7 +1147,7 @@
         "tags": ["Updates"],
         "operationId": "checkSignedUpdates",
         "summary": "Fetch and authenticate the latest signed release manifest",
-        "description": "Fetches bounded release metadata, manifest, and detached Ed25519 signature from the fixed ItzGlace/vaxa-vm source. It downloads no component archive and performs no host mutation.",
+        "description": "Fetches bounded release metadata, manifest, and detached Ed25519 signature from the fixed ItzGlace/vexa-vm source. It downloads no component archive and performs no host mutation.",
         "x-required-scopes": ["updates:write"],
         "parameters": [{ "$ref": "#/components/parameters/CsrfToken" }],
         "responses": {
@@ -3479,7 +3479,7 @@
         "required": ["schema_version", "repository", "release", "published_at", "components"],
         "properties": {
           "schema_version": { "type": "integer", "const": 1 },
-          "repository": { "type": "string", "const": "ItzGlace/vaxa-vm" },
+          "repository": { "type": "string", "const": "ItzGlace/vexa-vm" },
           "release": { "type": "string" },
           "published_at": { "type": "integer", "format": "int64" },
           "components": { "type": "array", "minItems": 1, "maxItems": 3, "uniqueItems": true, "items": { "$ref": "#/components/schemas/UpdateComponentRelease" } }
@@ -3491,7 +3491,7 @@
         "required": ["tag", "html_url", "signer_key_id", "manifest_sha256", "manifest"],
         "properties": {
           "tag": { "type": "string" },
-          "html_url": { "type": "string", "format": "uri", "pattern": "^https://github\\.com/ItzGlace/vaxa-vm/releases/" },
+          "html_url": { "type": "string", "format": "uri", "pattern": "^https://github\\.com/ItzGlace/vexa-vm/releases/" },
           "signer_key_id": { "type": "string", "maxLength": 128 },
           "manifest_sha256": { "$ref": "#/components/schemas/Sha256" },
           "manifest": { "$ref": "#/components/schemas/UpdateManifest" }
@@ -3612,7 +3612,7 @@
         "required": ["enabled", "repository", "current_version", "activation_executor_available", "reason", "executor_statuses", "latest_executor_status", "rollback_point"],
         "properties": {
           "enabled": { "type": "boolean", "const": false },
-          "repository": { "type": "string", "const": "ItzGlace/vaxa-vm" },
+          "repository": { "type": "string", "const": "ItzGlace/vexa-vm" },
           "current_version": { "type": "string" },
           "activation_executor_available": { "type": "boolean", "const": false },
           "reason": { "type": ["string", "null"] },
@@ -3627,7 +3627,7 @@
         "required": ["enabled", "repository", "current_version", "activation_executor_available", "state", "executor_statuses", "latest_executor_status", "rollback_point"],
         "properties": {
           "enabled": { "type": "boolean", "const": true },
-          "repository": { "type": "string", "const": "ItzGlace/vaxa-vm" },
+          "repository": { "type": "string", "const": "ItzGlace/vexa-vm" },
           "current_version": { "type": "string" },
           "activation_executor_available": { "type": "boolean", "description": "True only when the bounded root-owned helper readiness marker passes ownership, mode, size, and schema checks." },
           "state": { "$ref": "#/components/schemas/UpdateCoordinatorState" },

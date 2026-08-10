@@ -9,8 +9,8 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/ItzGlace/vaxa-vm/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/ItzGlace/vaxa-vm/actions/workflows/ci.yml/badge.svg"></a>
-  <a href="https://github.com/ItzGlace/vaxa-vm/releases"><img alt="GitHub release" src="https://img.shields.io/github/v/release/ItzGlace/vaxa-vm?display_name=tag&sort=semver"></a>
+  <a href="https://github.com/ItzGlace/vexa-vm/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/ItzGlace/vexa-vm/actions/workflows/ci.yml/badge.svg"></a>
+  <a href="https://github.com/ItzGlace/vexa-vm/releases"><img alt="GitHub release" src="https://img.shields.io/github/v/release/ItzGlace/vexa-vm?display_name=tag&sort=semver"></a>
   <a href="LICENSE"><img alt="AGPL-3.0-or-later" src="https://img.shields.io/badge/license-AGPL--3.0--or--later-8b5cf6"></a>
   <a href="https://www.rust-lang.org/"><img alt="Rust 1.75+" src="https://img.shields.io/badge/Rust-1.75%2B-38bdf8?logo=rust"></a>
   <img alt="Linux x86_64" src="https://img.shields.io/badge/platform-Linux%20x86__64-0f172a?logo=linux">
@@ -23,7 +23,7 @@ and audit trail.
 
 It is designed for operators who want a self-hosted, open-source alternative to closed VM
 management panels without assembling a separate frontend, API, job runner, and console proxy.
-Version `0.1.2` manages one KVM node. It is not yet a drop-in replacement for multi-node clustering,
+Version `0.1.3` manages one KVM node. It is not yet a drop-in replacement for multi-node clustering,
 live migration, or distributed storage in Proxmox VE, VMware vSphere, or OpenStack.
 
 ![Vexa-VM node overview](docs/screenshots/overall.png)
@@ -70,7 +70,7 @@ guest records. They contain no production node or customer data.
 Review [`install.sh`](install.sh), then run it on a fresh Debian/Ubuntu or RHEL-compatible KVM host:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/ItzGlace/vaxa-vm/main/install.sh | sudo bash
+curl -fsSL https://raw.githubusercontent.com/ItzGlace/vexa-vm/main/install.sh | sudo bash
 ```
 
 The installer verifies the release checksum, detects virtualization and host capacity, installs KVM
@@ -79,10 +79,10 @@ password exactly once.
 
 ### Debian package
 
-Download `vexa-vm_0.1.2_amd64.deb` from the matching GitHub release, then:
+Download `vexa-vm_0.1.3_amd64.deb` from the matching GitHub release, then:
 
 ```bash
-sudo apt install ./vexa-vm_0.1.2_amd64.deb
+sudo apt install ./vexa-vm_0.1.3_amd64.deb
 ```
 
 ### APT repository
@@ -91,9 +91,9 @@ The release workflow can publish a signed Debian repository to GitHub Pages. Aft
 owner configures its dedicated APT signing key, installation becomes:
 
 ```bash
-curl -fsSL https://itzglace.github.io/vaxa-vm/vexa-vm-archive-keyring.gpg \
+curl -fsSL https://itzglace.github.io/vexa-vm/vexa-vm-archive-keyring.gpg \
   | sudo tee /usr/share/keyrings/vexa-vm-archive-keyring.gpg >/dev/null
-echo "deb [arch=amd64 signed-by=/usr/share/keyrings/vexa-vm-archive-keyring.gpg] https://itzglace.github.io/vaxa-vm stable main" \
+echo "deb [arch=amd64 signed-by=/usr/share/keyrings/vexa-vm-archive-keyring.gpg] https://itzglace.github.io/vexa-vm stable main" \
   | sudo tee /etc/apt/sources.list.d/vexa-vm.list
 sudo apt update
 sudo apt install vexa-vm

@@ -10,7 +10,7 @@ readonly CONFIG_ROOT="/etc/vexa-vm"
 readonly UPDATE_TRUST_STORE="${CONFIG_ROOT}/update-trusted-keys.json"
 readonly SERVICE_USER="vexa"
 readonly VERSION="${VEXA_VERSION:-latest}"
-readonly REPOSITORY="ItzGlace/vaxa-vm"
+readonly REPOSITORY="ItzGlace/vexa-vm"
 readonly BIND_ADDRESS="${VEXA_BIND:-127.0.0.1:8080}"
 
 log() { printf '\033[1;36m[vexa-vm]\033[0m %s\n' "$*"; }

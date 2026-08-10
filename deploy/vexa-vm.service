@@ -1,6 +1,6 @@
 [Unit]
 Description=Vexa-VM KVM management panel
-Documentation=https://github.com/ItzGlace/vaxa-vm
+Documentation=https://github.com/ItzGlace/vexa-vm
 After=network-online.target libvirtd.service
 Wants=network-online.target
 

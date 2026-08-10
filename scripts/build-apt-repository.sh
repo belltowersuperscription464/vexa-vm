@@ -54,5 +54,5 @@ cat > "${OUTPUT}/index.html" <<'HTML'
 <!doctype html><meta charset="utf-8"><title>Vexa-VM APT repository</title>
 <h1>Vexa-VM signed APT repository</h1>
 <p>Installation instructions are available in the
-<a href="https://github.com/ItzGlace/vaxa-vm#apt-repository">Vexa-VM README</a>.</p>
+<a href="https://github.com/ItzGlace/vexa-vm#apt-repository">Vexa-VM README</a>.</p>
 HTML

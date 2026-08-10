@@ -3,6 +3,13 @@
 All notable changes to Vexa-VM are documented here. The project follows Semantic Versioning after
 the first stable release.
 
+## 0.1.3 - 2026-08-11
+
+### Changed
+
+- Corrected the canonical GitHub repository name from `vaxa-vm` to `vexa-vm` across the signed
+  updater, installer, packages, service metadata, documentation, badges, and release links.
+
 ## 0.1.2 - 2026-08-11
 
 ### Added

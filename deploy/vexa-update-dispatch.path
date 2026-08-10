@@ -1,6 +1,6 @@
 [Unit]
 Description=Watch for approved Vexa-VM update requests
-Documentation=https://github.com/ItzGlace/vaxa-vm/blob/main/docs/UPDATES.md
+Documentation=https://github.com/ItzGlace/vexa-vm/blob/main/docs/UPDATES.md
 Requires=vexa-update-executor-ready.service
 After=vexa-update-executor-ready.service
 

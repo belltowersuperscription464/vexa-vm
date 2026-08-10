@@ -51,7 +51,7 @@ Section: admin
 Priority: optional
 Architecture: amd64
 Maintainer: Vexa-VM contributors <noreply@users.noreply.github.com>
-Homepage: https://github.com/ItzGlace/vaxa-vm
+Homepage: https://github.com/ItzGlace/vexa-vm
 Installed-Size: ${installed_size}
 Depends: adduser, ca-certificates, curl, openssl, sqlite3, qemu-kvm, qemu-utils, libvirt-daemon-system, libvirt-clients, virtinst, cloud-image-utils, genisoimage, p7zip-full, dnsmasq-base, iproute2, nftables, systemd
 Description: open-source KVM virtualization panel and API

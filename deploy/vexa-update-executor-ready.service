@@ -1,6 +1,6 @@
 [Unit]
 Description=Validate the Vexa-VM privileged update executor boundary
-Documentation=https://github.com/ItzGlace/vaxa-vm/blob/main/docs/UPDATES.md
+Documentation=https://github.com/ItzGlace/vexa-vm/blob/main/docs/UPDATES.md
 After=local-fs.target
 Before=vexa-update-dispatch.service vexa-update-dispatch.path
 
