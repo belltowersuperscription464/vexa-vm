@@ -418,14 +418,15 @@ returned in the enriched administrator VM object.
 
 ### VM firewall and DDoS controls
 
-All VM network protections start disabled: `firewall_enabled`, `ddos_enabled`,
+All tenant-selectable VM network protections start disabled: `firewall_enabled`, `ddos_enabled`,
 every rule's `enabled` flag, port-scan protection, and invalid-packet dropping
 are `false`; default ingress and egress actions are `accept`. Merely creating a
 rule therefore cannot cut off a VM. An administrator, or a customer status
 session explicitly granted `firewall:write`, must choose and enable policy.
 Rate thresholds and rules remain editable while their enforcement switches are
 off, but they are inert until the corresponding firewall or DDoS switch is
-explicitly enabled.
+explicitly enabled. The host's default-on managed-pool ownership guard is
+separate and cannot be changed through a VM or customer route.
 
 Profiles support `accept`, `drop`, or `reject` default actions and optional SYN,
 UDP, ICMP, and new-connection packet-per-second limits. Enabling DDoS protection
@@ -465,8 +466,8 @@ Administrator-created rules use administrator ownership; status-link rules use
 | `DELETE` | `/api/v1/ip-addresses/{address_id}` | `network:write` | Remove an unassigned, non-main explicit address |
 | `GET` | `/api/v1/dns/defaults` | `network:read` | Ordered node DNS defaults |
 | `PUT` | `/api/v1/dns/defaults` | `network:write` | Replace ordered IPv4/IPv6 DNS defaults |
-| `GET` | `/api/v1/network/security` | `network:read` | Read the host-only BCP38 profile and applied revision |
-| `PATCH` | `/api/v1/network/security` | `network:write` | Enable/disable BCP38 and reconcile host enforcement |
+| `GET` | `/api/v1/network/security` | `network:read` | Read managed-pool ownership and BCP38 policy plus applied revision |
+| `PATCH` | `/api/v1/network/security` | `network:write` | Change either host-only switch and atomically reconcile enforcement |
 | `GET` | `/api/v1/network/blacklist` | `network:read` | List blacklist entries, optionally active-only |
 | `POST` | `/api/v1/network/blacklist` | `network:write` | Add an IPv4/IPv6 address or CIDR to the allocation blacklist |
 | `PATCH` | `/api/v1/network/blacklist/{entry_id}` | `network:write` | Change reason, source, expiry, metadata, or enabled state |
@@ -502,14 +503,23 @@ evidence records for datacenter/provider workflows. Their severity is 1-10;
 creating or resolving one does not automatically blacklist an address or
 change a VM network.
 
-Host BCP38 is an administrator-only, opt-in anti-spoofing control and defaults
+`ip_ownership_guard_enabled` is an administrator-only allocation control and
+defaults to `true`. It checks only Vexa-managed pool CIDRs: inbound destinations,
+outbound sources, and ARP sender addresses must belong to the VM associated with
+the host TAP. This prevents a guest from taking free, reserved, main-node, or
+another tenant's managed address through in-guest network changes. The rule is
+independent from tenant firewall/DDoS policy and is reconciled immediately after
+address ownership changes.
+
+Host BCP38 is a separate administrator-only, opt-in anti-spoofing control and defaults
 to disabled so low-end nodes incur no filtering cost until an administrator
 accepts and enables it. It validates VM IPv4/IPv6 and ARP sender sources against
 assigned addresses while allowing bootstrap-unspecified and IPv6 link-local
 traffic, and pins each TAP to the VM's configured Ethernet source MAC to prevent
 shared-bridge FDB poisoning. There is no customer BCP38 route. Vexa-created domains use stable TAP
 targets; imported domains with auto-generated `vnet*` targets must be given a
-persistent target before their policy can be applied reliably.
+persistent target before their policy can be applied reliably. Disabling BCP38
+does not disable the default managed-pool ownership guard.
 
 ### ISOs and images
 

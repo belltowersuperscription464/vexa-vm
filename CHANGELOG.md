@@ -3,6 +3,22 @@
 All notable changes to Vexa-VM are documented here. The project follows Semantic Versioning after
 the first stable release.
 
+## 0.1.1 - 2026-08-11
+
+### Added
+
+- Default-on managed IP ownership enforcement that binds each VM TAP interface to the public IPv4
+  and IPv6 addresses assigned by Vexa-VM, independently from the optional BCP38 policy.
+- Shared-bridge and routed per-VM bridge enforcement for inbound and outbound managed-subnet
+  traffic, including IPv4 ARP sender-address protection.
+- An administrator setting and API field to explicitly disable or re-enable the ownership guard.
+
+### Changed
+
+- IP-pool and address changes now reconcile the ownership rules atomically, with rollback where a
+  newly created pool cannot be enforced.
+- VM network startup remains fail-closed when required ownership rules cannot be installed.
+
 ## 0.1.0 - 2026-08-10
 
 ### Added

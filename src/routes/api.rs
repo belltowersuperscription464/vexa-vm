@@ -1818,6 +1818,7 @@ pub async fn patch_hypervisor_network_security(
         Err(apply_error) => {
             let rollback = state.db.patch_hypervisor_network_security(
                 &HypervisorNetworkSecurityPatch {
+                    ip_ownership_guard_enabled: Some(previous.ip_ownership_guard_enabled),
                     bcp38_enabled: Some(previous.bcp38_enabled),
                 },
                 Some(&auth.actor_id),
@@ -1830,10 +1831,10 @@ pub async fn patch_hypervisor_network_security(
             };
             return Err(AppError::Conflict(match rollback_apply {
                 Ok(()) => format!(
-                    "host BCP38 policy could not be applied; the previous setting was restored: {apply_error}"
+                    "host network-security policy could not be applied; the previous settings were restored: {apply_error}"
                 ),
                 Err(rollback_error) => format!(
-                    "host BCP38 policy could not be applied and restoring the previous rules also failed: {apply_error}; rollback: {rollback_error}"
+                    "host network-security policy could not be applied and restoring the previous rules also failed: {apply_error}; rollback: {rollback_error}"
                 ),
             }));
         }
@@ -1842,11 +1843,15 @@ pub async fn patch_hypervisor_network_security(
     audit(
         &state,
         &auth,
-        "hypervisor.bcp38.update",
+        "hypervisor.network_security.update",
         "hypervisor_network",
         None,
         true,
-        json!({ "enabled": profile.bcp38_enabled, "revision": profile.revision }),
+        json!({
+            "ip_ownership_guard_enabled": profile.ip_ownership_guard_enabled,
+            "bcp38_enabled": profile.bcp38_enabled,
+            "revision": profile.revision,
+        }),
     );
     Ok(Json(json!({ "profile": profile, "enforcement": enforcement })).into_response())
 }
@@ -2025,6 +2030,34 @@ pub async fn create_ip_pool(
         }
         materialized += 1;
     }
+    let network_security = if state
+        .db
+        .hypervisor_network_security()?
+        .ip_ownership_guard_enabled
+    {
+        match crate::services::firewall::reconcile(&state).await {
+            Ok(summary) => Some(summary),
+            Err(apply_error) => {
+                let rollback = state.db.delete_ip_pool_with_unassigned_addresses(&pool.id);
+                let rollback_apply = match rollback {
+                    Ok(()) => crate::services::firewall::reconcile(&state)
+                        .await
+                        .map(|_| ()),
+                    Err(error) => Err(error),
+                };
+                return Err(AppError::Conflict(match rollback_apply {
+                    Ok(()) => format!(
+                        "the managed IP pool could not be protected; its inventory was rolled back: {apply_error}"
+                    ),
+                    Err(rollback_error) => format!(
+                        "the managed IP pool could not be protected and rollback also failed: {apply_error}; rollback: {rollback_error}"
+                    ),
+                }));
+            }
+        }
+    } else {
+        None
+    };
     audit(
         &state,
         &auth,
@@ -2043,6 +2076,7 @@ pub async fn create_ip_pool(
             "pool": pool,
             "materialized_addresses": materialized,
             "sparse": sparse,
+            "network_security": network_security,
         })),
     )
         .into_response())
@@ -2088,6 +2122,19 @@ pub async fn delete_ip_pool(
 ) -> AppResult<Response> {
     auth.require("network:write")?;
     state.db.delete_ip_pool(&id)?;
+    if state
+        .db
+        .hypervisor_network_security()?
+        .ip_ownership_guard_enabled
+    {
+        crate::services::firewall::reconcile(&state)
+            .await
+            .map_err(|error| {
+                AppError::Conflict(format!(
+                    "the pool was deleted, but the stricter previous ownership rules could not be refreshed: {error}"
+                ))
+            })?;
+    }
     audit(
         &state,
         &auth,
@@ -2179,7 +2226,7 @@ pub async fn patch_ip_address(
         return Err(AppError::Validation("status or vm_id is required".into()));
     };
     let affected_vm_id = input.vm_id.as_deref().or(previous_vm_id.as_deref());
-    let network_security = reconcile_bcp38_after_address_change(&state, affected_vm_id).await?;
+    let network_security = reconcile_ownership_after_address_change(&state, affected_vm_id).await?;
     audit(
         &state,
         &auth,
@@ -2220,7 +2267,7 @@ pub async fn assign_ip_address(
         .db
         .assign_ip(&current.address, &input.vm_id, input.primary)?;
     let network_security =
-        reconcile_bcp38_after_address_change(&state, Some(&input.vm_id)).await?;
+        reconcile_ownership_after_address_change(&state, Some(&input.vm_id)).await?;
     audit(
         &state,
         &auth,
@@ -2246,7 +2293,7 @@ pub async fn release_ip_address(
     let previous_vm_id = current.assigned_vm_id.clone();
     let address = state.db.release_ip(&current.address)?;
     let network_security =
-        reconcile_bcp38_after_address_change(&state, previous_vm_id.as_deref()).await?;
+        reconcile_ownership_after_address_change(&state, previous_vm_id.as_deref()).await?;
     audit(
         &state,
         &auth,
@@ -4696,15 +4743,18 @@ fn address_values_with_allocation_status(
         .collect()
 }
 
-/// BCP38 depends on the exact current address ownership map. Apply an address
-/// change immediately instead of leaving a spoofing window until the periodic
-/// reconciler runs. If the atomic nftables update fails, the affected active VM
-/// is contained by the same fail-closed path used for explicit policy changes.
-async fn reconcile_bcp38_after_address_change(
+/// Both the managed-subnet ownership guard and BCP38 depend on the exact
+/// current allocation map. Apply a change immediately instead of leaving an
+/// ownership window until the periodic reconciler runs. If the atomic update
+/// fails, the affected active VM is contained by the normal fail-closed path.
+async fn reconcile_ownership_after_address_change(
     state: &AppState,
     vm_id: Option<&str>,
 ) -> AppResult<Option<crate::services::firewall::FirewallApplySummary>> {
-    if !state.db.hypervisor_network_security()?.bcp38_enabled {
+    let host_policy = state.db.hypervisor_network_security()?;
+    let ownership_guard_active =
+        host_policy.ip_ownership_guard_enabled && !state.db.list_ip_pools()?.is_empty();
+    if !ownership_guard_active && !host_policy.bcp38_enabled {
         return Ok(None);
     }
     let Some(vm_id) = vm_id else {

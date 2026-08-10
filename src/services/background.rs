@@ -762,10 +762,10 @@ async fn execute_job(state: &AppState, job: &Job) -> AppResult<Value> {
     match job.kind.as_str() {
         "vm.create" => {
             let mut request: CreateVmRequest = payload_field(&job.payload, "request")?;
-            // A newly defined guest must not gain network access before an
-            // explicitly enabled VM firewall or host BCP38 policy is present.
-            // Define it stopped, persist the stable TAP name, reconcile, and
-            // only then honor the requested start state.
+            // A newly defined guest must not gain network access before the
+            // default managed-IP ownership guard and any explicitly enabled
+            // firewall/BCP38 policy are present. Define it stopped, persist
+            // the stable TAP, reconcile, then honor the requested start state.
             let start_after_provisioning = request.start;
             request.start = false;
             let manual_install = request.image.is_manual_installer();
@@ -2570,10 +2570,10 @@ fn payload_field<T: serde::de::DeserializeOwned>(payload: &Value, field: &str) -
         .map_err(|error| AppError::Validation(format!("job payload field '{field}' is invalid: {error}")))
 }
 
-/// Apply every explicitly enabled forwarding policy before a guest is allowed
-/// to become network-active. If reconciliation fails, stop an already-active
-/// guest so the requested protection fails closed instead of becoming a badge
-/// in the panel with unfiltered traffic underneath it.
+/// Apply the default ownership guard and every explicitly enabled forwarding
+/// policy before a guest becomes network-active. If reconciliation fails, stop
+/// an already-active guest so protection fails closed instead of becoming only
+/// a panel badge with unfiltered traffic underneath it.
 async fn ensure_vm_network_policy(
     state: &AppState,
     vm: &crate::models::Vm,

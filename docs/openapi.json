@@ -875,14 +875,14 @@
     },
     "/api/v1/network/security": {
       "get": {
-        "tags": ["Network"], "operationId": "getHypervisorNetworkSecurity", "summary": "Read host-only BCP38 policy", "description": "BCP38 is opt-in and disabled by default. It is never exposed to customer status sessions.", "x-required-scopes": ["network:read"],
+        "tags": ["Network"], "operationId": "getHypervisorNetworkSecurity", "summary": "Read host-only IP ownership and BCP38 policy", "description": "Managed-pool IP ownership is enabled by default; full BCP38 is opt-in. Neither switch is exposed to customer status sessions.", "x-required-scopes": ["network:read"],
         "responses": {
           "200": { "description": "Desired and applied host policy", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/HypervisorNetworkSecurityEnvelope" } } } },
           "401": { "$ref": "#/components/responses/Unauthorized" }, "403": { "$ref": "#/components/responses/Forbidden" }
         }
       },
       "patch": {
-        "tags": ["Network"], "operationId": "updateHypervisorNetworkSecurity", "summary": "Enable or disable host BCP38 enforcement", "x-required-scopes": ["network:write"],
+        "tags": ["Network"], "operationId": "updateHypervisorNetworkSecurity", "summary": "Change host IP ownership or BCP38 enforcement", "x-required-scopes": ["network:write"],
         "parameters": [{ "$ref": "#/components/parameters/CsrfToken" }],
         "requestBody": { "required": true, "content": { "application/merge-patch+json": { "schema": { "$ref": "#/components/schemas/HypervisorNetworkSecurityPatch" } }, "application/json": { "schema": { "$ref": "#/components/schemas/HypervisorNetworkSecurityPatch" } } } },
         "responses": {
@@ -3898,10 +3898,12 @@
         "additionalProperties": false
       },
       "FirewallEnforcement": {
-        "type": "object", "required": ["enforced", "active_vm_policies", "bcp38_enabled", "changed"],
+        "type": "object", "required": ["enforced", "active_vm_policies", "guarded_vms", "ip_ownership_guard_enabled", "bcp38_enabled", "changed"],
         "properties": {
           "enforced": { "type": "boolean" },
           "active_vm_policies": { "type": "integer", "minimum": 0 },
+          "guarded_vms": { "type": "integer", "minimum": 0 },
+          "ip_ownership_guard_enabled": { "type": "boolean" },
           "bcp38_enabled": { "type": "boolean" },
           "changed": { "type": "boolean" }
         },
@@ -3934,8 +3936,9 @@
       },
       "HypervisorNetworkSecurity": {
         "type": "object",
-        "required": ["bcp38_enabled", "revision", "applied_revision", "last_applied_at", "last_error", "updated_by", "created_at", "updated_at"],
+        "required": ["ip_ownership_guard_enabled", "bcp38_enabled", "revision", "applied_revision", "last_applied_at", "last_error", "updated_by", "created_at", "updated_at"],
         "properties": {
+          "ip_ownership_guard_enabled": { "type": "boolean", "default": true, "description": "TAP-scoped ownership enforcement for addresses inside Vexa-managed pools." },
           "bcp38_enabled": { "type": "boolean", "default": false },
           "revision": { "type": "integer", "format": "int64", "minimum": 0 },
           "applied_revision": { "type": ["integer", "null"], "format": "int64", "minimum": 0 },
@@ -3948,7 +3951,7 @@
         "additionalProperties": false
       },
       "HypervisorNetworkSecurityPatch": {
-        "type": "object", "properties": { "bcp38_enabled": { "type": "boolean", "description": "Opt-in anti-spoofing filter; defaults to false." } }, "additionalProperties": false
+        "type": "object", "properties": { "ip_ownership_guard_enabled": { "type": "boolean", "description": "Managed-pool ownership guard; defaults to true." }, "bcp38_enabled": { "type": "boolean", "description": "Optional full anti-spoofing filter; defaults to false." } }, "additionalProperties": false
       },
       "HypervisorNetworkSecurityEnvelope": {
         "type": "object", "required": ["profile"], "properties": { "profile": { "$ref": "#/components/schemas/HypervisorNetworkSecurity" } }, "additionalProperties": false

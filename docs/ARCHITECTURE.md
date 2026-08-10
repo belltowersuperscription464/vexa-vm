@@ -104,9 +104,12 @@ attempt that re-verifies the named domain and seed are absent before completing 
 ## Networking
 
 The schema models IPv4 and IPv6, public/private ranges, a protected main-node address, reservations,
-gateways and associations. The initial libvirt adapter attaches to a configured bridge. A routed
-per-VM TAP deployment can be added behind the same trait, but must own a dedicated nftables table,
-apply updates atomically, reserve every host-bound IP and fail closed if anti-spoof rules cannot load.
+gateways and associations. The libvirt adapter supports a configured shared bridge and Vexa-managed
+routed per-VM TAP/bridge links. The network-security reconciler owns a dedicated nftables table,
+applies updates atomically, reserves every host-bound IP and fails closed if required rules cannot load.
+The default host policy binds each TAP to its assigned addresses inside Vexa-managed pool CIDRs in
+both directions, including ARP sender validation; optional BCP38 extends source validation beyond
+those managed ranges.
 
 VM DNS servers, the recoverable password and customer-managed SSH keys are stored desired values.
 Cloud-image create/reinstall jobs place them into a newly generated cloud-init or Cloudbase-Init

@@ -1,8 +1,8 @@
 # Network and disk protection
 
-Vexa-VM separates tenant-selectable VM policy from host-wide anti-spoofing. Upgrading or installing
-the application does not enable a packet filter, rate limit, blocked port, deletion lock, automatic
-snapshot, or BCP38 policy. An administrator must review and enable each control explicitly.
+Vexa-VM separates tenant-selectable VM policy from host-owned IP allocation enforcement. Installing
+or upgrading enables only the managed-pool ownership guard. It does not enable a tenant firewall,
+rate limit, blocked port, DDoS preset, deletion lock, automatic snapshot, or full BCP38 policy.
 
 ## Safe defaults
 
@@ -13,11 +13,31 @@ The database creates every VM network-security profile with these values:
 - invalid-packet filtering: off;
 - each individual firewall rule: off;
 - default ingress and egress action: accept; and
+- managed IPv4/IPv6 pool ownership guard: **on**; and
 - host BCP38 source-address validation: off.
 
-When every control is off, the reconciler emits no active forwarding policy and removes only the
-`bridge vexa_vm` table previously owned by Vexa-VM. It does not edit another nftables table, the host
-input chain, SSH access, the distribution firewall, or a datacenter firewall.
+When the node has managed IP pools, the ownership guard emits a small TAP-scoped rule set even while
+every optional control is off. With no managed pools, or after an administrator explicitly disables
+the guard, the reconciler removes an otherwise-unused `bridge vexa_vm` table. It never edits another
+nftables table, the host input chain, SSH access, the distribution firewall, or a datacenter firewall.
+
+## Managed IP ownership guard
+
+The default-on ownership guard protects only CIDRs registered in Vexa-VM. For each host-owned VM TAP,
+it permits managed-subnet IPv4/IPv6 destinations and sources only when that exact address is assigned
+to that VM. It also rejects ARP sender claims for other managed IPv4 addresses. Free, reserved,
+main-node, and other tenants' addresses therefore cannot be acquired by changing netplan, NetworkManager,
+Windows networking, RouterOS configuration, or the guest MAC address.
+
+Inbound filtering prevents traffic for a stolen address from reaching the wrong TAP. Egress and ARP
+filtering also prevent the guest from advertising or originating that managed address, avoiding an
+ARP/neighbor-cache blackhole for the legitimate owner. Traffic whose source and destination are
+outside Vexa-managed pools is not evaluated by this guard, which keeps its cost below full BCP38 on
+typical one-pool nodes.
+
+This is an administrator-only allocation invariant and is not exposed to customer status sessions.
+It can be disabled in **Settings → Network**, for deployments that enforce equivalent IP/MAC/TAP
+bindings upstream. Disabling it requires an explicit warning confirmation.
 
 ## VM firewall and DDoS controls
 
@@ -54,6 +74,7 @@ Thresholds, packet-check presets, default actions, and administrator/system rule
 returned as editable customer policy nor mutable in the public API. The customer cannot:
 
 - enable, disable, or inspect host BCP38 policy;
+- enable, disable, or inspect the managed IP ownership guard;
 - change CPU, RAM, disk capacity, bandwidth, traffic quota, IP ownership, or another VM;
 - edit the IP blacklist or abuse log; or
 - create allow rules, egress rules, CIDR rules, source-port rules or packet-logging rules; or
@@ -65,7 +86,7 @@ actor and affected VM without recording credentials.
 
 ## Host-only BCP38
 
-BCP38 is a separate administrator-only setting. When enabled, Vexa-VM permits a guest to originate
+BCP38 is a separate, optional administrator-only setting. Unlike the managed-pool guard, it permits a guest to originate
 traffic only from IPv4 and IPv6 addresses assigned to that VM, plus the minimal unspecified and
 IPv6 link-local sources required during address configuration. The same TAP-scoped chain pins the
 configured Ethernet source MAC, preventing a guest from poisoning the shared bridge FDB by claiming
@@ -75,9 +96,9 @@ host-side interface target. An imported domain that relies on libvirt's changing
 automatic `vnetN` names must be given a persistent target before this policy can be treated as a
 durable security boundary.
 
-Because source validation adds work on every forwarded packet, it remains off on low-end nodes until
-an administrator chooses to use it. Customers and customer tokens have no API route or scope for
-this switch.
+Because full source validation adds work on every forwarded packet, it remains off on low-end nodes
+until an administrator chooses to use it. Turning it off does not disable managed-pool ownership.
+Customers and customer tokens have no API route or scope for either host switch.
 
 ## IP blacklist and abuse records
 
@@ -112,8 +133,9 @@ readable but blocks customer mutations until an administrator clears it.
 
 ## Host prerequisites
 
-Enforcement requires nftables with bridge-family support and a libvirt network path visible to the
-bridge forward hook. Routed, Open vSwitch, SR-IOV, macvtap, and provider-managed networks require a
-deployment-specific validation before relying on this policy. Always verify the effective ruleset
-and run an allowed/blocked connectivity test on a disposable VM before enabling protection for a
-production guest.
+Enforcement requires nftables with bridge-family support and stable host-side TAP names. Shared Linux
+bridges are covered through the bridge forward hook; Vexa-managed routed per-VM bridges are covered
+through bridge input/output hooks at the host L2 boundary. Open vSwitch, SR-IOV, macvtap, and
+provider-managed networks require deployment-specific validation before relying on this policy.
+Always inspect the effective ruleset and run allowed/blocked tests on a disposable VM before using a
+new network backend for production guests.

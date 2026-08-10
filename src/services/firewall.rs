@@ -1,12 +1,14 @@
 //! Atomic nftables enforcement for VM forwarding policy.
 //!
-//! Vexa-VM owns only the `bridge vexa_vm` table. All chains hook the bridge
-//! forward path, so applying a guest policy cannot change host input/output or
-//! the administrator's connection. Desired policy is inert until either a VM
-//! firewall/DDoS switch or the host-only BCP38 switch is explicitly enabled.
+//! Vexa-VM owns only the `bridge vexa_vm` table. Shared bridges use its forward
+//! hook; routed per-VM bridges use its input/output hooks at the L2 boundary.
+//! It never changes inet host input/output policy or the administrator's SSH
+//! path. Tenant firewall/DDoS and full BCP38 remain opt-in; managed IP ownership
+//! is a separate default-on host invariant.
 
 use std::{net::IpAddr, path::Path, process::Stdio, time::Duration};
 
+use ipnet::IpNet;
 use serde::Serialize;
 use tokio::{io::AsyncWriteExt, process::Command};
 
@@ -28,6 +30,8 @@ const TABLE_NAME: &str = "vexa_vm";
 pub struct FirewallApplySummary {
     pub enforced: bool,
     pub active_vm_policies: usize,
+    pub guarded_vms: usize,
+    pub ip_ownership_guard_enabled: bool,
     pub bcp38_enabled: bool,
     pub changed: bool,
 }
@@ -45,12 +49,37 @@ struct DesiredVmPolicy {
 /// affected profile instead of being reported as active.
 pub async fn reconcile(state: &AppState) -> AppResult<FirewallApplySummary> {
     let _guard = state.network_security_lock.lock().await;
+    let host_policy = state.db.hypervisor_network_security()?;
     let capabilities = state.hypervisor.capabilities().await?;
     if capabilities.backend != "libvirt" {
-        return Ok(FirewallApplySummary::default());
+        return Ok(FirewallApplySummary {
+            ip_ownership_guard_enabled: host_policy.ip_ownership_guard_enabled,
+            bcp38_enabled: host_policy.bcp38_enabled,
+            ..FirewallApplySummary::default()
+        });
     }
 
-    let host_policy = state.db.hypervisor_network_security()?;
+    let mut managed_subnets = state
+        .db
+        .list_ip_pools()?
+        .into_iter()
+        .map(|pool| {
+            let network = pool.cidr.parse::<IpNet>().map_err(|_| {
+                AppError::Internal(format!("stored IP pool CIDR is invalid: {}", pool.cidr))
+            })?;
+            if network.addr().is_ipv4() != (pool.family == AddressFamily::V4) {
+                return Err(AppError::Internal(format!(
+                    "stored IP pool family does not match its CIDR: {}",
+                    pool.cidr
+                )));
+            }
+            Ok(network)
+        })
+        .collect::<AppResult<Vec<_>>>()?;
+    managed_subnets.sort_by_key(ToString::to_string);
+    managed_subnets.dedup();
+    let ownership_guard_active =
+        host_policy.ip_ownership_guard_enabled && !managed_subnets.is_empty();
     let mut desired = Vec::new();
     for vm in state.db.list_vms()? {
         let Some(profile) = state.db.vm_network_security(&vm.id)? else {
@@ -85,13 +114,26 @@ pub async fn reconcile(state: &AppState) -> AppResult<FirewallApplySummary> {
                 && (item.profile.firewall_enabled || item.profile.ddos_enabled)
         })
         .count();
+    let guarded_count = if ownership_guard_active {
+        desired
+            .iter()
+            .filter(|item| item.vm.libvirt_uuid.is_some())
+            .count()
+    } else {
+        0
+    };
     let may_have_owned_table = host_policy.last_applied_at.is_some()
         || desired
             .iter()
             .any(|item| item.profile.last_applied_at.is_some());
     let nft = match nft_binary() {
         Ok(path) => path,
-        Err(_) if active_count == 0 && !host_policy.bcp38_enabled && !may_have_owned_table => {
+        Err(_)
+            if active_count == 0
+                && guarded_count == 0
+                && !host_policy.bcp38_enabled
+                && !may_have_owned_table =>
+        {
             // Nothing has ever been applied by Vexa-VM, so an absent nft
             // binary cannot leave stale Vexa-owned rules behind. Keep the
             // disabled revision unapplied: there was no host mutation to do.
@@ -109,7 +151,13 @@ pub async fn reconcile(state: &AppState) -> AppResult<FirewallApplySummary> {
             return Err(error);
         }
     };
-    let script = match render_ruleset(&desired, host_policy.bcp38_enabled, table_exists) {
+    let script = match render_ruleset(
+        &desired,
+        host_policy.ip_ownership_guard_enabled,
+        host_policy.bcp38_enabled,
+        &managed_subnets,
+        table_exists,
+    ) {
         Ok(script) => script,
         Err(error) => {
             record_reconcile_failure(state, &desired, host_policy.revision, &error.to_string());
@@ -133,8 +181,10 @@ pub async fn reconcile(state: &AppState) -> AppResult<FirewallApplySummary> {
         .db
         .mark_hypervisor_network_security_applied(host_policy.revision, None)?;
     Ok(FirewallApplySummary {
-        enforced: active_count > 0 || host_policy.bcp38_enabled,
+        enforced: active_count > 0 || guarded_count > 0 || host_policy.bcp38_enabled,
         active_vm_policies: active_count,
+        guarded_vms: guarded_count,
+        ip_ownership_guard_enabled: host_policy.ip_ownership_guard_enabled,
         bcp38_enabled: host_policy.bcp38_enabled,
         changed,
     })
@@ -143,7 +193,10 @@ pub async fn reconcile(state: &AppState) -> AppResult<FirewallApplySummary> {
 pub fn vm_policy_enabled(state: &AppState, vm_id: &str) -> AppResult<bool> {
     let profile = state.db.vm_network_security(vm_id)?;
     let host = state.db.hypervisor_network_security()?;
-    Ok(host.bcp38_enabled
+    let ownership_guard_active =
+        host.ip_ownership_guard_enabled && !state.db.list_ip_pools()?.is_empty();
+    Ok(ownership_guard_active
+        || host.bcp38_enabled
         || profile
             .as_ref()
             .is_some_and(|profile| profile.firewall_enabled || profile.ddos_enabled))
@@ -281,14 +334,20 @@ fn record_reconcile_failure(
 
 fn render_ruleset(
     desired: &[DesiredVmPolicy],
+    ip_ownership_guard_enabled: bool,
     bcp38_enabled: bool,
+    managed_subnets: &[IpNet],
     table_exists: bool,
 ) -> AppResult<String> {
+    let ownership_guard_active = ip_ownership_guard_enabled && !managed_subnets.is_empty();
     let active = desired
         .iter()
         .filter(|item| {
             item.vm.libvirt_uuid.is_some()
-                && (item.profile.firewall_enabled || item.profile.ddos_enabled || bcp38_enabled)
+                && (item.profile.firewall_enabled
+                    || item.profile.ddos_enabled
+                    || ownership_guard_active
+                    || bcp38_enabled)
         })
         .collect::<Vec<_>>();
     if active.is_empty() {
@@ -318,10 +377,40 @@ fn render_ruleset(
         ));
     }
     script.push_str("  }\n");
+    // Shared bridges traverse the bridge forward hook. Vexa's routed per-VM
+    // bridge terminates L2 at the host, so guest egress traverses bridge input
+    // and routed ingress traverses bridge output. Scope all three hooks to the
+    // same stable host-owned TAP to cover both layouts without touching inet
+    // host input/output policy.
+    script.push_str("  chain input { type filter hook input priority -10; policy accept;\n");
+    for (index, item) in active.iter().enumerate() {
+        let interface = validated_interface_name(item.vm.tap_name.as_deref())?;
+        script.push_str(&format!(
+            "    iifname \"{interface}\" jump vm{index}_egress\n"
+        ));
+    }
+    script.push_str("  }\n");
+    script.push_str("  chain output { type filter hook output priority -10; policy accept;\n");
+    for (index, item) in active.iter().enumerate() {
+        let interface = validated_interface_name(item.vm.tap_name.as_deref())?;
+        script.push_str(&format!(
+            "    oifname \"{interface}\" jump vm{index}_ingress\n"
+        ));
+    }
+    script.push_str("  }\n");
 
     for (index, item) in active.iter().enumerate() {
         let compiled = compile_vm_network_policy(&item.profile, &item.rules)?;
         script.push_str(&format!("  chain vm{index}_ingress {{\n"));
+        if ownership_guard_active {
+            render_ip_ownership_guard(
+                &mut script,
+                FirewallDirection::Ingress,
+                managed_subnets,
+                &item.ipv4,
+                &item.ipv6,
+            )?;
+        }
         render_ddos_rules(&mut script, &compiled);
         if compiled.firewall_enabled {
             script.push_str("    ct state established,related counter accept\n");
@@ -342,6 +431,15 @@ fn render_ruleset(
         script.push_str("  }\n");
 
         script.push_str(&format!("  chain vm{index}_egress {{\n"));
+        if ownership_guard_active {
+            render_ip_ownership_guard(
+                &mut script,
+                FirewallDirection::Egress,
+                managed_subnets,
+                &item.ipv4,
+                &item.ipv6,
+            )?;
+        }
         if bcp38_enabled {
             render_bcp38(
                 &mut script,
@@ -370,6 +468,89 @@ fn render_ruleset(
     }
     script.push_str("}\n");
     Ok(script)
+}
+
+/// Protect only Vexa-managed address ranges. This is deliberately separate
+/// from full BCP38: unrelated source addresses are untouched, while packets
+/// using a free, reserved, host-owned, or another VM's managed address are
+/// rejected at the host-owned TAP boundary. Matching the TAP instead of a
+/// guest-selected MAC keeps the policy effective after in-guest MAC changes.
+fn render_ip_ownership_guard(
+    script: &mut String,
+    direction: FirewallDirection,
+    managed_subnets: &[IpNet],
+    ipv4: &[String],
+    ipv6: &[String],
+) -> AppResult<()> {
+    let assigned_v4 = validated_assigned_addresses(ipv4, true)?;
+    let assigned_v6 = validated_assigned_addresses(ipv6, false)?;
+    for subnet in managed_subnets {
+        let assigned = if subnet.addr().is_ipv4() {
+            &assigned_v4
+        } else {
+            &assigned_v6
+        };
+        let owned = assigned
+            .iter()
+            .filter(|address| subnet.contains(*address))
+            .map(ToString::to_string)
+            .collect::<Vec<_>>();
+        let (selector, address_selector) = match (direction, subnet.addr().is_ipv4()) {
+            (FirewallDirection::Ingress, true) => ("ether type ip ip daddr", "ip daddr"),
+            (FirewallDirection::Ingress, false) => ("ether type ip6 ip6 daddr", "ip6 daddr"),
+            (FirewallDirection::Egress, true) => ("ether type ip ip saddr", "ip saddr"),
+            (FirewallDirection::Egress, false) => ("ether type ip6 ip6 saddr", "ip6 saddr"),
+        };
+        render_managed_subnet_drop(script, selector, address_selector, subnet, &owned);
+        if direction == FirewallDirection::Egress && subnet.addr().is_ipv4() {
+            render_managed_subnet_drop(
+                script,
+                "ether type arp arp saddr ip",
+                "arp saddr ip",
+                subnet,
+                &owned,
+            );
+        }
+    }
+    Ok(())
+}
+
+fn render_managed_subnet_drop(
+    script: &mut String,
+    selector: &str,
+    address_selector: &str,
+    subnet: &IpNet,
+    owned: &[String],
+) {
+    script.push_str("    ");
+    script.push_str(selector);
+    script.push(' ');
+    script.push_str(&subnet.to_string());
+    if !owned.is_empty() {
+        script.push(' ');
+        script.push_str(address_selector);
+        script.push_str(" != { ");
+        script.push_str(&owned.join(", "));
+        script.push_str(" }");
+    }
+    script.push_str(" counter drop\n");
+}
+
+fn validated_assigned_addresses(values: &[String], ipv4: bool) -> AppResult<Vec<IpAddr>> {
+    values
+        .iter()
+        .map(|value| {
+            let address = value.parse::<IpAddr>().map_err(|_| {
+                AppError::Validation("stored assigned IP address is invalid".into())
+            })?;
+            if address.is_ipv4() != ipv4 {
+                return Err(AppError::Validation(
+                    "stored assigned IP address has the wrong family".into(),
+                ));
+            }
+            Ok(address)
+        })
+        .collect()
 }
 
 fn render_ddos_rules(
@@ -703,7 +884,7 @@ mod tests {
             ipv4: vec![],
             ipv6: vec![],
         }];
-        assert_eq!(render_ruleset(&desired, false, false).unwrap(), "");
+        assert_eq!(render_ruleset(&desired, false, false, &[], false).unwrap(), "");
     }
 
     #[test]
@@ -721,7 +902,7 @@ mod tests {
             ipv4: vec![],
             ipv6: vec![],
         }];
-        assert_eq!(render_ruleset(&desired, false, false).unwrap(), "");
+        assert_eq!(render_ruleset(&desired, false, false, &[], false).unwrap(), "");
     }
 
     #[test]
@@ -734,7 +915,7 @@ mod tests {
             ipv6: vec![],
         }];
         assert_eq!(
-            render_ruleset(&desired, false, true).unwrap(),
+            render_ruleset(&desired, false, false, &[], true).unwrap(),
             "delete table bridge vexa_vm\n"
         );
     }
@@ -748,16 +929,81 @@ mod tests {
             ipv4: vec!["192.0.2.10".into()],
             ipv6: vec![],
         }];
-        let script = render_ruleset(&desired, false, false).unwrap();
+        let script = render_ruleset(&desired, false, false, &[], false).unwrap();
         assert!(script.contains("table bridge vexa_vm"));
         assert!(script.contains("hook forward"));
         assert!(script.contains("iifname \"vexa123456\""));
         assert!(script.contains("oifname \"vexa123456\""));
         assert!(!script.contains("ether saddr 52:54:00:12:34:56"));
         assert_eq!(script.matches("ct state established,related counter accept").count(), 2);
-        assert!(!script.contains("hook input"));
+        assert!(script.contains("chain input { type filter hook input"));
+        assert!(script.contains("chain output { type filter hook output"));
+        assert!(!script.contains("table inet"));
         assert!(!script.contains("arp saddr ip"));
         assert!(!script.contains("ip saddr !="));
+    }
+
+    #[test]
+    fn ownership_guard_limits_managed_subnets_without_enabling_bcp38() {
+        let desired = vec![DesiredVmPolicy {
+            vm: vm(),
+            profile: profile(false),
+            rules: vec![],
+            ipv4: vec!["192.0.2.10".into()],
+            ipv6: vec!["2001:db8::10".into()],
+        }];
+        let subnets = vec![
+            "192.0.2.0/24".parse().unwrap(),
+            "198.51.100.0/24".parse().unwrap(),
+            "2001:db8::/64".parse().unwrap(),
+        ];
+        let script = render_ruleset(&desired, true, false, &subnets, false).unwrap();
+        assert!(script.contains(
+            "ether type ip ip daddr 192.0.2.0/24 ip daddr != { 192.0.2.10 } counter drop"
+        ));
+        assert!(script.contains(
+            "ether type ip ip saddr 192.0.2.0/24 ip saddr != { 192.0.2.10 } counter drop"
+        ));
+        assert!(script.contains(
+            "ether type arp arp saddr ip 192.0.2.0/24 arp saddr ip != { 192.0.2.10 } counter drop"
+        ));
+        assert!(script.contains(
+            "ether type ip ip daddr 198.51.100.0/24 counter drop"
+        ));
+        assert!(script.contains(
+            "ether type ip6 ip6 daddr 2001:db8::/64 ip6 daddr != { 2001:db8::10 } counter drop"
+        ));
+        assert!(!script.contains("ether saddr !="));
+        assert!(!script.contains("0.0.0.0/0"));
+    }
+
+    #[test]
+    fn disabled_ownership_guard_leaves_managed_subnets_inert() {
+        let desired = vec![DesiredVmPolicy {
+            vm: vm(),
+            profile: profile(false),
+            rules: vec![],
+            ipv4: vec!["192.0.2.10".into()],
+            ipv6: vec![],
+        }];
+        let subnets = vec!["192.0.2.0/24".parse().unwrap()];
+        assert_eq!(
+            render_ruleset(&desired, false, false, &subnets, false).unwrap(),
+            ""
+        );
+    }
+
+    #[test]
+    fn ownership_guard_rejects_invalid_stored_assignments() {
+        let desired = vec![DesiredVmPolicy {
+            vm: vm(),
+            profile: profile(false),
+            rules: vec![],
+            ipv4: vec!["192.0.2.10 } counter accept".into()],
+            ipv6: vec![],
+        }];
+        let subnets = vec!["192.0.2.0/24".parse().unwrap()];
+        assert!(render_ruleset(&desired, true, false, &subnets, false).is_err());
     }
 
     #[test]
@@ -771,7 +1017,7 @@ mod tests {
             ipv4: vec![],
             ipv6: vec![],
         }];
-        assert!(render_ruleset(&desired, false, false).is_err());
+        assert!(render_ruleset(&desired, false, false, &[], false).is_err());
     }
 
     #[test]
@@ -783,7 +1029,7 @@ mod tests {
             ipv4: vec!["192.0.2.10".into()],
             ipv6: vec!["2001:db8::10".into()],
         }];
-        let script = render_ruleset(&desired, true, false).unwrap();
+        let script = render_ruleset(&desired, false, true, &[], false).unwrap();
         assert!(script.contains("192.0.2.10"));
         assert!(script.contains("2001:db8::10"));
         assert!(script.contains("fe80::/10"));
@@ -802,7 +1048,7 @@ mod tests {
             ipv4: vec!["192.0.2.10".into()],
             ipv6: vec![],
         }];
-        assert!(render_ruleset(&desired, true, false).is_err());
+        assert!(render_ruleset(&desired, false, true, &[], false).is_err());
     }
 
     #[test]
@@ -817,7 +1063,7 @@ mod tests {
             ipv4: vec!["192.0.2.10".into()],
             ipv6: vec![],
         }];
-        assert_eq!(render_ruleset(&desired, true, false).unwrap(), "");
+        assert_eq!(render_ruleset(&desired, false, true, &[], false).unwrap(), "");
     }
 
     #[test]
@@ -829,7 +1075,7 @@ mod tests {
             ipv4: vec!["192.0.2.10 } counter accept".into()],
             ipv6: vec![],
         }];
-        assert!(render_ruleset(&desired, true, false).is_err());
+        assert!(render_ruleset(&desired, false, true, &[], false).is_err());
 
         let desired = vec![DesiredVmPolicy {
             vm: vm(),
@@ -838,7 +1084,7 @@ mod tests {
             ipv4: vec!["2001:db8::10".into()],
             ipv6: vec![],
         }];
-        assert!(render_ruleset(&desired, true, false).is_err());
+        assert!(render_ruleset(&desired, false, true, &[], false).is_err());
     }
 
     #[test]
@@ -852,7 +1098,7 @@ mod tests {
             ipv4: vec![],
             ipv6: vec![],
         }];
-        assert!(render_ruleset(&desired, false, false).is_err());
+        assert!(render_ruleset(&desired, false, false, &[], false).is_err());
     }
 
     #[test]

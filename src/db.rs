@@ -32,7 +32,7 @@ use crate::{
     },
 };
 
-const SCHEMA_VERSION: i64 = 9;
+const SCHEMA_VERSION: i64 = 10;
 const INITIAL_MIGRATION: &str = include_str!("../migrations/0001_init.sql");
 const API_KEY_ALLOWLIST_MIGRATION: &str = include_str!("../migrations/0002_api_key_ip_allowlist.sql");
 const TRAFFIC_ENFORCEMENT_MIGRATION: &str = include_str!("../migrations/0003_vm_traffic_enforcement.sql");
@@ -46,6 +46,8 @@ const UPDATE_STATUS_AUDIT_IMPORTS_MIGRATION: &str =
     include_str!("../migrations/0008_update_status_audit_imports.sql");
 const NETWORK_SECURITY_SAFE_DEFAULTS_MIGRATION: &str =
     include_str!("../migrations/0009_network_security_safe_defaults.sql");
+const IP_OWNERSHIP_GUARD_MIGRATION: &str =
+    include_str!("../migrations/0010_ip_ownership_guard.sql");
 
 #[derive(Clone)]
 pub struct Database {
@@ -117,6 +119,10 @@ impl Database {
         }
         if version < 9 {
             connection.execute_batch(NETWORK_SECURITY_SAFE_DEFAULTS_MIGRATION)?;
+            version = 9;
+        }
+        if version < 10 {
+            connection.execute_batch(IP_OWNERSHIP_GUARD_MIGRATION)?;
         }
         connection.pragma_update(None, "foreign_keys", "ON")?;
 
@@ -2859,7 +2865,7 @@ impl Database {
         })
     }
 
-    // --- Disabled-by-default network security policy ------------------------
+    // --- VM policy and host IP-ownership security ----------------------------
 
     pub fn vm_network_security(&self, vm_id: &str) -> AppResult<Option<VmNetworkSecurity>> {
         self.with_connection(|connection| query_vm_network_security(connection, vm_id))
@@ -3187,17 +3193,26 @@ impl Database {
     ) -> AppResult<HypervisorNetworkSecurity> {
         self.with_transaction(TransactionBehavior::Immediate, |transaction| {
             let current = query_hypervisor_network_security(transaction)?;
-            let Some(enabled) = patch.bcp38_enabled else {
-                return Ok(current);
-            };
-            if enabled == current.bcp38_enabled {
+            let ip_ownership_guard_enabled = patch
+                .ip_ownership_guard_enabled
+                .unwrap_or(current.ip_ownership_guard_enabled);
+            let bcp38_enabled = patch.bcp38_enabled.unwrap_or(current.bcp38_enabled);
+            if ip_ownership_guard_enabled == current.ip_ownership_guard_enabled
+                && bcp38_enabled == current.bcp38_enabled
+            {
                 return Ok(current);
             }
             transaction.execute(
                 "UPDATE hypervisor_network_security
-                 SET bcp38_enabled = ?1, revision = revision + 1, last_error = NULL,
-                     updated_by = ?2, updated_at = ?3 WHERE singleton_id = 1",
-                params![bool_i64(enabled), updated_by, unix_now()],
+                 SET ip_ownership_guard_enabled = ?1, bcp38_enabled = ?2,
+                     revision = revision + 1, last_error = NULL,
+                     updated_by = ?3, updated_at = ?4 WHERE singleton_id = 1",
+                params![
+                    bool_i64(ip_ownership_guard_enabled),
+                    bool_i64(bcp38_enabled),
+                    updated_by,
+                    unix_now(),
+                ],
             )?;
             query_hypervisor_network_security(transaction)
         })
@@ -4881,20 +4896,22 @@ fn row_to_vm_firewall_rule(row: &Row<'_>) -> rusqlite::Result<VmFirewallRule> {
 fn query_hypervisor_network_security(connection: &Connection) -> AppResult<HypervisorNetworkSecurity> {
     connection
         .query_row(
-            "SELECT bcp38_enabled, revision, applied_revision, last_applied_at,
+            "SELECT ip_ownership_guard_enabled, bcp38_enabled, revision,
+                    applied_revision, last_applied_at,
                     last_error, updated_by, created_at, updated_at
              FROM hypervisor_network_security WHERE singleton_id = 1",
             [],
             |row| {
                 Ok(HypervisorNetworkSecurity {
-                    bcp38_enabled: bool_column(row, 0)?,
-                    revision: checked_u64_column(row, 1)?,
-                    applied_revision: optional_u64_column(row, 2)?,
-                    last_applied_at: row.get(3)?,
-                    last_error: row.get(4)?,
-                    updated_by: row.get(5)?,
-                    created_at: row.get(6)?,
-                    updated_at: row.get(7)?,
+                    ip_ownership_guard_enabled: bool_column(row, 0)?,
+                    bcp38_enabled: bool_column(row, 1)?,
+                    revision: checked_u64_column(row, 2)?,
+                    applied_revision: optional_u64_column(row, 3)?,
+                    last_applied_at: row.get(4)?,
+                    last_error: row.get(5)?,
+                    updated_by: row.get(6)?,
+                    created_at: row.get(7)?,
+                    updated_at: row.get(8)?,
                 })
             },
         )
@@ -5662,7 +5679,7 @@ mod tests {
     #[test]
     fn migration_and_vm_crud_work() {
         let database = Database::open_in_memory().unwrap();
-        assert_eq!(database.schema_version().unwrap(), 9);
+        assert_eq!(database.schema_version().unwrap(), 10);
         let vm = database.create_vm(&test_vm()).unwrap();
         assert_eq!(database.get_vm("vm-one").unwrap().unwrap().id, vm.id);
         database
@@ -6770,7 +6787,7 @@ mod tests {
     }
 
     #[test]
-    fn migrations_seven_through_nine_upgrade_an_existing_schema_sequentially() {
+    fn migrations_seven_through_ten_upgrade_an_existing_schema_sequentially() {
         let connection = Connection::open_in_memory().unwrap();
         connection.execute_batch(INITIAL_MIGRATION).unwrap();
         connection.execute_batch(API_KEY_ALLOWLIST_MIGRATION).unwrap();
@@ -6781,7 +6798,7 @@ mod tests {
             .execute_batch(FIREWALL_RULE_OWNERSHIP_MIGRATION)
             .unwrap();
         let database = Database::from_connection(connection).unwrap();
-        assert_eq!(database.schema_version().unwrap(), 9);
+        assert_eq!(database.schema_version().unwrap(), 10);
         let columns: Vec<String> = database
             .with_connection(|connection| {
                 let mut statement = connection.prepare("PRAGMA table_info(vm_guest_tools)")?;
@@ -6792,6 +6809,11 @@ mod tests {
         assert!(columns.contains(&"pending_secret_envelope".into()));
         assert!(columns.contains(&"pending_generation".into()));
         assert!(columns.contains(&"pending_installed".into()));
+        let host_policy = database.hypervisor_network_security().unwrap();
+        assert!(host_policy.ip_ownership_guard_enabled);
+        assert!(!host_policy.bcp38_enabled);
+        assert_eq!(host_policy.revision, 1);
+        assert_eq!(host_policy.applied_revision, None);
 
         let vm = database.create_vm(&test_vm()).unwrap();
         let security = Security::new([0x46; 32]);
@@ -7453,7 +7475,7 @@ mod tests {
     }
 
     #[test]
-    fn network_security_is_inert_until_explicitly_enabled() {
+    fn optional_network_controls_are_inert_while_ownership_guard_defaults_on() {
         let database = Database::open_in_memory().unwrap();
         let vm = database.create_vm(&test_vm()).unwrap();
         let profile = database.vm_network_security(&vm.id).unwrap().unwrap();
@@ -7465,7 +7487,9 @@ mod tests {
         assert_eq!(profile.new_connection_limit_pps, Some(10_000));
         assert!(!profile.drop_invalid_packets);
         assert_eq!(profile.revision, 0);
-        assert!(!database.hypervisor_network_security().unwrap().bcp38_enabled);
+        let host_defaults = database.hypervisor_network_security().unwrap();
+        assert!(host_defaults.ip_ownership_guard_enabled);
+        assert!(!host_defaults.bcp38_enabled);
 
         let rule = database
             .create_vm_firewall_rule(
@@ -7558,13 +7582,28 @@ mod tests {
         let host = database
             .patch_hypervisor_network_security(
                 &HypervisorNetworkSecurityPatch {
+                    ip_ownership_guard_enabled: None,
                     bcp38_enabled: Some(true),
                 },
                 Some("admin-id"),
             )
             .unwrap();
         assert!(host.bcp38_enabled);
-        assert_eq!(host.revision, 1);
+        assert!(host.ip_ownership_guard_enabled);
+        assert_eq!(host.revision, 2);
+
+        let host = database
+            .patch_hypervisor_network_security(
+                &HypervisorNetworkSecurityPatch {
+                    ip_ownership_guard_enabled: Some(false),
+                    bcp38_enabled: None,
+                },
+                Some("admin-id"),
+            )
+            .unwrap();
+        assert!(!host.ip_ownership_guard_enabled);
+        assert!(host.bcp38_enabled);
+        assert_eq!(host.revision, 3);
     }
 
     #[test]

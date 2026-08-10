@@ -731,6 +731,7 @@ pub struct VmFirewallRule {
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct HypervisorNetworkSecurity {
+    pub ip_ownership_guard_enabled: bool,
     pub bcp38_enabled: bool,
     pub revision: u64,
     pub applied_revision: Option<u64>,
@@ -743,6 +744,7 @@ pub struct HypervisorNetworkSecurity {
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 pub struct HypervisorNetworkSecurityPatch {
+    pub ip_ownership_guard_enabled: Option<bool>,
     pub bcp38_enabled: Option<bool>,
 }
 

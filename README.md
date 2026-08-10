@@ -23,7 +23,7 @@ and audit trail.
 
 It is designed for operators who want a self-hosted, open-source alternative to closed VM
 management panels without assembling a separate frontend, API, job runner, and console proxy.
-Version `0.1.0` manages one KVM node. It is not yet a drop-in replacement for multi-node clustering,
+Version `0.1.1` manages one KVM node. It is not yet a drop-in replacement for multi-node clustering,
 live migration, or distributed storage in Proxmox VE, VMware vSphere, or OpenStack.
 
 ![Vexa-VM node overview](docs/screenshots/overall.png)
@@ -40,9 +40,9 @@ live migration, or distributed storage in Proxmox VE, VMware vSphere, or OpenSta
   after exactly ten minutes; the QEMU VNC target remains loopback-only.
 - **IPv4 and IPv6 inventory:** pools, numeric address ordering, main/reserved/free/used state,
   reverse DNS metadata, VM ownership, default DNS, routed networking, and bridge support.
-- **Network guardrails:** per-VM rate and traffic quotas, automatic network isolation when a finite
-  quota is exceeded, customer-controlled port rules, optional DDoS profiles, and optional
-  hypervisor-only BCP38 filtering. Every firewall feature starts disabled.
+- **Network guardrails:** default-on TAP-to-IP ownership for managed pools, per-VM rate and traffic
+  quotas, automatic network isolation when a finite quota is exceeded, customer-controlled port
+  rules, optional DDoS profiles, and optional full hypervisor-only BCP38 filtering.
 - **Real observability:** host and guest CPU, RAM, disk, network, quota, and service health; 1-hour,
   24-hour, and 7-day charts; durable operations; activity logs; and IP abuse evidence records.
 - **Security by design:** Argon2id admin passwords, AES-256-GCM guest secrets, hashed bearer tokens,
@@ -79,10 +79,10 @@ password exactly once.
 
 ### Debian package
 
-Download `vexa-vm_0.1.0_amd64.deb` from the matching GitHub release, then:
+Download `vexa-vm_0.1.1_amd64.deb` from the matching GitHub release, then:
 
 ```bash
-sudo apt install ./vexa-vm_0.1.0_amd64.deb
+sudo apt install ./vexa-vm_0.1.1_amd64.deb
 ```
 
 ### APT repository

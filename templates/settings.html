@@ -82,10 +82,14 @@
       </form>
 
       <article class="panel hidden p-5 sm:p-7" data-settings-panel="network" id="host-network-security-panel">
-        <div class="border-b border-white/[.07] pb-5"><h2 class="text-xl font-extralight text-white">Hypervisor anti-spoofing</h2><p class="mt-1 text-sm text-slate-400">BCP38 source filtering is host-only and cannot be changed from customer status links.</p></div>
-        <label class="mt-6 flex items-start gap-3 rounded-xl border border-amber-300/20 bg-amber-300/[.05] p-4"><input id="bcp38-enabled" type="checkbox" class="mt-0.5 h-4 w-4"><span><span class="block text-sm font-normal text-slate-200">Enable BCP38 for guest egress traffic</span><span class="mt-1 block text-xs leading-5 text-slate-500">Pins each TAP to its configured source MAC and drops unassigned IPv4/IPv6 sources. Off by default; leave it off on low-end nodes unless anti-spoofing is required.</span></span></label>
-        <p id="bcp38-state" class="mt-4 text-xs text-slate-500">Loading host filter state…</p>
-        <div class="mt-6 flex justify-end"><button id="save-bcp38" type="button" class="btn-primary">Apply host policy</button></div>
+        <div class="border-b border-white/[.07] pb-5"><h2 class="text-xl font-extralight text-white">Hypervisor IP ownership</h2><p class="mt-1 text-sm text-slate-400">Host-only address enforcement cannot be changed from customer status links.</p></div>
+        <div class="mt-6 space-y-3">
+          <label class="flex items-start gap-3 rounded-xl border border-orbit-300/20 bg-orbit-300/[.05] p-4"><input id="ip-ownership-guard-enabled" type="checkbox" class="mt-0.5 h-4 w-4"><span><span class="block text-sm font-normal text-slate-200">Protect managed IP ownership</span><span class="mt-1 block text-xs leading-5 text-slate-500">Default on. A VM may send or receive traffic using only its assigned addresses inside Vexa-managed IPv4/IPv6 pools. Free, reserved, host-owned, and other tenants' addresses stay unreachable even after in-guest netplan or MAC changes.</span></span></label>
+          <p id="ip-ownership-guard-state" class="px-1 text-xs text-slate-500">Loading ownership filter state…</p>
+          <label class="flex items-start gap-3 rounded-xl border border-amber-300/20 bg-amber-300/[.05] p-4"><input id="bcp38-enabled" type="checkbox" class="mt-0.5 h-4 w-4"><span><span class="block text-sm font-normal text-slate-200">Enable full BCP38 for guest egress traffic</span><span class="mt-1 block text-xs leading-5 text-slate-500">Optional. Pins each TAP to its configured source MAC and drops every unassigned IPv4/IPv6 source, including addresses outside managed pools. Leave off on low-end nodes unless full source validation is required.</span></span></label>
+          <p id="bcp38-state" class="px-1 text-xs text-slate-500">Loading BCP38 state…</p>
+        </div>
+        <div class="mt-6 flex justify-end"><button id="save-host-network-security" type="button" class="btn-primary">Apply host policy</button></div>
       </article>
 
       <form class="panel hidden p-5 sm:p-7" data-settings-panel="console" data-settings-form="console">
