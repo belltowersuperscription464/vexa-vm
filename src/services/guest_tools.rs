@@ -1,6 +1,6 @@
 use std::{
-    fmt,
-    fs,
+    fmt, fs,
+    net::IpAddr,
     path::{Path, PathBuf},
     sync::Arc,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
@@ -15,15 +15,15 @@ use reqwest::{redirect::Policy, Client, Method, StatusCode};
 use serde::Serialize;
 use serde_json::{json, Value};
 use vexa_guest_protocol::{
-    read_frame, write_frame, Command, Request, Response, ResponseData, MIN_SECRET_BYTES,
+    read_frame, write_frame, Command, NetworkAddress, Request, Response, ResponseData, MIN_SECRET_BYTES,
 };
 
 use crate::{
     config::Config,
     error::{AppError, AppResult},
     models::{
-        GuestToolsPlatform, GuestToolsProvisioner, GuestToolsStatus, InstallMode, IsoImage,
-        NewAuditEvent, Vm, VmGuestTools,
+        GuestToolsPlatform, GuestToolsProvisioner, GuestToolsStatus, InstallMode, IsoImage, NewAuditEvent,
+        Vm, VmGuestTools,
     },
     state::AppState,
 };
@@ -90,7 +90,10 @@ pub fn compatibility(config: &Config, image: &IsoImage) -> GuestToolsCompatibili
     {
         return unsupported("the image does not declare automated cloud initialization");
     }
-    if !matches!(image.architecture.to_ascii_lowercase().as_str(), "x86_64" | "amd64") {
+    if !matches!(
+        image.architecture.to_ascii_lowercase().as_str(),
+        "x86_64" | "amd64"
+    ) {
         return unsupported("no Guest Tools artifact is configured for this architecture");
     }
 
@@ -101,9 +104,7 @@ pub fn compatibility(config: &Config, image: &IsoImage) -> GuestToolsCompatibili
         .map(|value| value.trim().to_ascii_lowercase());
     let os = image.os_family.to_ascii_lowercase();
     let (platform, provisioner) = match declared.as_deref() {
-        Some("cloud-init" | "cloud_init") => {
-            (GuestToolsPlatform::Linux, GuestToolsProvisioner::CloudInit)
-        }
+        Some("cloud-init" | "cloud_init") => (GuestToolsPlatform::Linux, GuestToolsProvisioner::CloudInit),
         Some("cloudbase-init" | "cloudbase_nocloud" | "cloudbase-init-nocloud") => (
             GuestToolsPlatform::Windows,
             GuestToolsProvisioner::CloudbaseNoCloud,
@@ -115,9 +116,7 @@ pub fn compatibility(config: &Config, image: &IsoImage) -> GuestToolsCompatibili
             GuestToolsProvisioner::CloudbaseNoCloud,
         ),
         Some(_) => return unsupported("the image declares an unknown Guest Tools provisioner"),
-        None if is_linux_family(&os) => {
-            (GuestToolsPlatform::Linux, GuestToolsProvisioner::CloudInit)
-        }
+        None if is_linux_family(&os) => (GuestToolsPlatform::Linux, GuestToolsProvisioner::CloudInit),
         None if is_unattended_windows_image(image) => (
             GuestToolsPlatform::Windows,
             GuestToolsProvisioner::CloudbaseNoCloud,
@@ -203,21 +202,13 @@ pub fn require_installable(config: &Config, image: &IsoImage) -> AppResult<Guest
     }
     Ok(GuestToolsInstall {
         platform: result.platform.expect("supported image has a platform"),
-        provisioner: result
-            .provisioner
-            .expect("supported image has a provisioner"),
-        artifact_path: artifact_path(
-            config,
-            result.platform.expect("supported image has a platform"),
-        )
-        .expect("available artifact has a path"),
+        provisioner: result.provisioner.expect("supported image has a provisioner"),
+        artifact_path: artifact_path(config, result.platform.expect("supported image has a platform"))
+            .expect("available artifact has a path"),
     })
 }
 
-pub fn artifact_for_platform(
-    config: &Config,
-    platform: GuestToolsPlatform,
-) -> AppResult<PathBuf> {
+pub fn artifact_for_platform(config: &Config, platform: GuestToolsPlatform) -> AppResult<PathBuf> {
     artifact_path(config, platform)
         .filter(|path| valid_artifact(path))
         .ok_or_else(|| {
@@ -235,7 +226,9 @@ pub fn socket_path(config: &Config, vm_id: &str) -> AppResult<PathBuf> {
             .bytes()
             .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
     {
-        return Err(AppError::Validation("VM ID is invalid for a guest channel".into()));
+        return Err(AppError::Validation(
+            "VM ID is invalid for a guest channel".into(),
+        ));
     }
     Ok(config.guest_tools_socket_dir.join(format!("{vm_id}.sock")))
 }
@@ -252,6 +245,68 @@ pub fn new_secret() -> String {
     encoded
 }
 
+/// Apply the complete control-plane address inventory inside a running guest.
+/// The command is authoritative: addresses removed from Vexa are removed from
+/// the managed guest interface, while additions are made immediately.
+pub async fn apply_network_inventory(state: &AppState, vm: &Vm) -> AppResult<GuestApplyResult> {
+    let records = state.db.vm_ip_addresses(&vm.id)?;
+    let dns = state.db.dns_servers(None, Some(&vm.id))?;
+    let routed = crate::services::routed_network::plan(vm)?;
+    let mut addresses = Vec::with_capacity(records.len() + usize::from(routed.is_some()));
+    let mut ipv4_gateway = None;
+    let mut ipv6_gateway = None;
+
+    if let Some(plan) = routed.as_ref() {
+        addresses.push(NetworkAddress {
+            address: IpAddr::V4(plan.guest_address),
+            prefix_length: plan.prefix_length,
+        });
+        ipv4_gateway = Some(IpAddr::V4(plan.gateway));
+    }
+    for record in records {
+        let address = record
+            .address
+            .parse::<IpAddr>()
+            .map_err(|_| AppError::Internal(format!("stored VM address '{}' is invalid", record.address)))?;
+        addresses.push(NetworkAddress {
+            address,
+            prefix_length: record.prefix_length,
+        });
+        if routed.is_none() {
+            if let Some(gateway) = record.gateway.as_deref() {
+                let gateway = gateway
+                    .parse::<IpAddr>()
+                    .map_err(|_| AppError::Internal(format!("stored VM gateway '{gateway}' is invalid")))?;
+                if gateway.is_ipv4() {
+                    ipv4_gateway.get_or_insert(gateway);
+                } else {
+                    ipv6_gateway.get_or_insert(gateway);
+                }
+            }
+        }
+    }
+    let gateways = ipv4_gateway.into_iter().chain(ipv6_gateway).collect();
+    let dns_servers = dns
+        .into_iter()
+        .map(|server| {
+            server.address.parse::<IpAddr>().map_err(|_| {
+                AppError::Internal(format!("stored DNS address '{}' is invalid", server.address))
+            })
+        })
+        .collect::<AppResult<Vec<_>>>()?;
+    Ok(try_apply(
+        state,
+        vm,
+        Command::SetNetwork {
+            interface: None,
+            addresses,
+            gateways,
+            dns_servers,
+        },
+    )
+    .await)
+}
+
 pub async fn try_apply(state: &AppState, vm: &Vm, command: Command) -> GuestApplyResult {
     if is_routeros_vm(vm) {
         return routeros_apply(state, vm, command).await;
@@ -265,15 +320,14 @@ pub async fn try_apply(state: &AppState, vm: &Vm, command: Command) -> GuestAppl
     };
     let _channel_guard = channel_lock.lock().await;
     let Some(record) = state.db.vm_guest_tools(&vm.id).ok().flatten() else {
-        return pending("Vexa Guest Tools is not installed; the value will apply on the next compatible reinstall");
+        return pending(
+            "Vexa Guest Tools is not installed; the value will apply on the next compatible reinstall",
+        );
     };
     if !record.enabled {
         return pending("Vexa Guest Tools is disabled for this VM");
     }
-    let client = match state
-        .db
-        .vm_guest_tools_client_secret(&vm.id, &state.security)
-    {
+    let client = match state.db.vm_guest_tools_client_secret(&vm.id, &state.security) {
         Ok(Some(client)) => client,
         Ok(None) => return pending("Vexa Guest Tools has no active channel secret"),
         Err(error) => return mark_unavailable(state, &vm.id, &error.to_string()),
@@ -333,9 +387,7 @@ pub async fn try_apply(state: &AppState, vm: &Vm, command: Command) -> GuestAppl
             }
         }
         Ok(Err(GuestExchangeError::Rejected(error))) => mark_rejected(state, &vm.id, &error),
-        Ok(Err(GuestExchangeError::Unavailable(error))) => {
-            mark_unavailable(state, &vm.id, &error)
-        }
+        Ok(Err(GuestExchangeError::Unavailable(error))) => mark_unavailable(state, &vm.id, &error),
         Err(error) => mark_unavailable(state, &vm.id, &format!("guest-tools task failed: {error}")),
     }
 }
@@ -379,20 +431,18 @@ pub async fn bootstrap(
         .vm_guest_tools(&vm.id)?
         .ok_or_else(|| AppError::NotFound("VM guest-tools configuration".into()))?;
     if !record.enabled {
-        return Err(AppError::Conflict("Vexa Guest Tools is disabled for this VM".into()));
+        return Err(AppError::Conflict(
+            "Vexa Guest Tools is disabled for this VM".into(),
+        ));
     }
-    let current_generation = state
-        .db
-        .installed_vm_guest_tools_rotation_generation(&vm.id)?;
+    let current_generation = state.db.installed_vm_guest_tools_rotation_generation(&vm.id)?;
     if expected_generation != current_generation.as_deref() {
         // A power event or older provisioning parent can leave an already
         // queued bootstrap behind while a newer reinstall changes the active
         // generation. The stale job must become a no-op: it may neither
         // authenticate with another generation nor overwrite current status.
         return Ok(GuestBootstrapResult {
-            installed_version: record
-                .installed_version
-                .unwrap_or(record.desired_version),
+            installed_version: record.installed_version.unwrap_or(record.desired_version),
             promoted_rotation: false,
             seed_media_retired: false,
             superseded: true,
@@ -410,12 +460,7 @@ pub async fn bootstrap(
     let mut secret = decode_channel_secret(client.secret)?;
     let path = socket_path(&state.config, &vm.id)?;
     let response = tokio::task::spawn_blocking(move || {
-        let result = exchange(
-            &path,
-            &secret,
-            Command::Health,
-            Duration::from_secs(2),
-        );
+        let result = exchange(&path, &secret, Command::Health, Duration::from_secs(2));
         secret.fill(0);
         result
     })
@@ -442,12 +487,9 @@ pub async fn bootstrap(
     // retryable with that same installed generation.
     let seed_media_retired = retire_authenticated_seed_media(state, vm).await?;
     let promoted_rotation = if let Some(generation) = client.pending_generation.as_deref() {
-        state.db.promote_vm_guest_tools_rotation(
-            &vm.id,
-            generation,
-            &installed_version,
-            &state.security,
-        )?;
+        state
+            .db
+            .promote_vm_guest_tools_rotation(&vm.id, generation, &installed_version, &state.security)?;
         true
     } else {
         state.db.update_vm_guest_tools_status(
@@ -468,10 +510,7 @@ pub async fn bootstrap(
 }
 
 async fn retire_authenticated_seed_media(state: &AppState, vm: &Vm) -> AppResult<bool> {
-    let seed_path = state
-        .config
-        .cloud_init_storage
-        .join(format!("{}.iso", vm.id));
+    let seed_path = state.config.cloud_init_storage.join(format!("{}.iso", vm.id));
     let metadata = match tokio::fs::symlink_metadata(&seed_path).await {
         Ok(metadata) => metadata,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
@@ -483,10 +522,7 @@ async fn retire_authenticated_seed_media(state: &AppState, vm: &Vm) -> AppResult
         ));
     }
 
-    state
-        .hypervisor
-        .detach_seed_media(&vm.name, &seed_path)
-        .await?;
+    state.hypervisor.detach_seed_media(&vm.name, &seed_path).await?;
     match tokio::fs::remove_file(&seed_path).await {
         Ok(()) => {}
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
@@ -538,9 +574,8 @@ fn exchange(
     {
         use std::os::unix::net::UnixStream;
 
-        let mut stream = UnixStream::connect(path).map_err(|error| {
-            GuestExchangeError::Unavailable(channel_connect_error_message(&error))
-        })?;
+        let mut stream = UnixStream::connect(path)
+            .map_err(|error| GuestExchangeError::Unavailable(channel_connect_error_message(&error)))?;
         stream
             .set_read_timeout(Some(timeout))
             .map_err(|error| GuestExchangeError::Unavailable(error.to_string()))?;
@@ -552,14 +587,8 @@ fn exchange(
         OsRng.fill_bytes(&mut nonce);
         let nonce = STANDARD_NO_PAD.encode(nonce);
         let expected_command = command.clone();
-        let request = Request::signed(
-            uuid::Uuid::new_v4().to_string(),
-            now,
-            nonce,
-            command,
-            secret,
-        )
-        .map_err(|error| GuestExchangeError::Unavailable(protocol_error(error).to_string()))?;
+        let request = Request::signed(uuid::Uuid::new_v4().to_string(), now, nonce, command, secret)
+            .map_err(|error| GuestExchangeError::Unavailable(protocol_error(error).to_string()))?;
         write_frame(&mut stream, &request)
             .map_err(|error| GuestExchangeError::Unavailable(protocol_error(error).to_string()))?;
         // Virtio-serial is a continuous byte stream even when the host-side
@@ -581,12 +610,9 @@ fn exchange(
             stream
                 .set_read_timeout(Some(remaining))
                 .map_err(|error| GuestExchangeError::Unavailable(error.to_string()))?;
-            let response: Response = read_frame(&mut stream).map_err(|error| {
-                GuestExchangeError::Unavailable(protocol_error(error).to_string())
-            })?;
-            if response.request_id != request.request_id
-                || response.request_nonce != request.nonce
-            {
+            let response: Response = read_frame(&mut stream)
+                .map_err(|error| GuestExchangeError::Unavailable(protocol_error(error).to_string()))?;
+            if response.request_id != request.request_id || response.request_nonce != request.nonce {
                 if stale_response_frames == MAX_STALE_RESPONSE_FRAMES {
                     return Err(GuestExchangeError::Unavailable(
                         "Vexa Guest Tools channel returned too many stale responses".into(),
@@ -605,9 +631,7 @@ fn exchange(
                     unix_timestamp(),
                     120,
                 )
-                .map_err(|error| {
-                    GuestExchangeError::Unavailable(protocol_error(error).to_string())
-                })?;
+                .map_err(|error| GuestExchangeError::Unavailable(protocol_error(error).to_string()))?;
         };
         if let Some(error) = verified.error {
             return Err(GuestExchangeError::Rejected(format!(
@@ -615,13 +639,9 @@ fn exchange(
                 error.message
             )));
         }
-        verified
-            .data
-            .ok_or_else(|| {
-                GuestExchangeError::Unavailable(
-                    "Vexa Guest Tools response contained no result".into(),
-                )
-            })
+        verified.data.ok_or_else(|| {
+            GuestExchangeError::Unavailable("Vexa Guest Tools response contained no result".into())
+        })
     }
     #[cfg(not(unix))]
     {
@@ -648,9 +668,9 @@ fn channel_connect_error_message(error: &std::io::Error) -> String {
 
 fn decode_channel_secret(secret: String) -> AppResult<Vec<u8>> {
     let mut encoded = secret.into_bytes();
-    let decoded = STANDARD_NO_PAD.decode(&encoded).map_err(|_| {
-        AppError::Internal("stored Guest Tools channel secret is not valid base64".into())
-    });
+    let decoded = STANDARD_NO_PAD
+        .decode(&encoded)
+        .map_err(|_| AppError::Internal("stored Guest Tools channel secret is not valid base64".into()));
     encoded.fill(0);
     let decoded = decoded?;
     if decoded.len() < MIN_SECRET_BYTES {
@@ -681,30 +701,24 @@ fn pending(message: &str) -> GuestApplyResult {
 }
 
 fn mark_unavailable(state: &AppState, vm_id: &str, error: &str) -> GuestApplyResult {
-    let _ = state.db.update_vm_guest_tools_status(
-        vm_id,
-        GuestToolsStatus::Unavailable,
-        None,
-        Some(error),
-        false,
-    );
+    let _ =
+        state
+            .db
+            .update_vm_guest_tools_status(vm_id, GuestToolsStatus::Unavailable, None, Some(error), false);
     GuestApplyResult {
         applied: false,
         pending: true,
         mechanism: "provisioning",
         status: "pending".into(),
-        message: "Guest Tools is not currently reachable; the saved value will apply on the next reinstall".into(),
+        message: "Guest Tools is not currently reachable; the saved value will apply on the next reinstall"
+            .into(),
     }
 }
 
 fn mark_rejected(state: &AppState, vm_id: &str, error: &str) -> GuestApplyResult {
-    let _ = state.db.update_vm_guest_tools_status(
-        vm_id,
-        GuestToolsStatus::Ready,
-        None,
-        Some(error),
-        true,
-    );
+    let _ = state
+        .db
+        .update_vm_guest_tools_status(vm_id, GuestToolsStatus::Ready, None, Some(error), true);
     GuestApplyResult {
         applied: false,
         // Password, hostname, DNS and SSH-key handlers persist their desired
@@ -721,17 +735,14 @@ fn mark_rejected(state: &AppState, vm_id: &str, error: &str) -> GuestApplyResult
 async fn routeros_apply(state: &AppState, vm: &Vm, command: Command) -> GuestApplyResult {
     let is_probe = matches!(command, Command::Ping | Command::Health);
     let result = match command {
-        Command::Ping | Command::Health => routeros_health(state, vm).await.map(|_| {
-            "RouterOS built-in QEMU Guest Agent health check succeeded".to_owned()
-        }),
-        Command::SetPassword { username, password } => routeros_change_password(
-            state,
-            vm,
-            &username,
-            &password,
-        )
-        .await
-        .map(|_| "Password changed through the protected RouterOS management link".into()),
+        Command::Ping | Command::Health => routeros_health(state, vm)
+            .await
+            .map(|_| "RouterOS built-in QEMU Guest Agent health check succeeded".to_owned()),
+        Command::SetPassword { username, password } => {
+            routeros_change_password(state, vm, &username, &password)
+                .await
+                .map(|_| "Password changed through the protected RouterOS management link".into())
+        }
         Command::SetHostname { hostname } => {
             let script = format!("/system identity set name={}\n", routeros_string(&hostname));
             routeros_exec_script(state, vm, &script, true)
@@ -749,15 +760,24 @@ async fn routeros_apply(state: &AppState, vm: &Vm, command: Command) -> GuestApp
                 .await
                 .map(|_| "DNS servers changed through the RouterOS guest integration".into())
         }
+        Command::SetNetwork {
+            addresses,
+            gateways,
+            dns_servers,
+            ..
+        } => {
+            let script = routeros_network_script(&addresses, &gateways, &dns_servers);
+            routeros_exec_script(state, vm, &script, true)
+                .await
+                .map(|_| "RouterOS addresses and routes changed through the guest integration".into())
+        }
         Command::SetSshKeys { .. } => Err(AppError::Conflict(
             "RouterOS does not expose safe atomic authorized-key replacement through its QEMU Guest Agent"
                 .into(),
         )),
-        Command::Shutdown => {
-            routeros_exec_script(state, vm, "/system shutdown\n", false)
-                .await
-                .map(|_| "RouterOS shutdown was accepted".into())
-        }
+        Command::Shutdown => routeros_exec_script(state, vm, "/system shutdown\n", false)
+            .await
+            .map(|_| "RouterOS shutdown was accepted".into()),
         Command::Reboot => routeros_exec_script(state, vm, "/system reboot\n", false)
             .await
             .map(|_| "RouterOS reboot was accepted".into()),
@@ -775,11 +795,54 @@ async fn routeros_apply(state: &AppState, vm: &Vm, command: Command) -> GuestApp
             pending: !is_probe,
             mechanism: "routeros_qemu_agent",
             status: "unavailable".into(),
-            message: format!(
-                "RouterOS built-in guest integration is not currently reachable: {error}"
-            ),
+            message: format!("RouterOS built-in guest integration is not currently reachable: {error}"),
         },
     }
+}
+
+fn routeros_network_script(
+    addresses: &[NetworkAddress],
+    gateways: &[IpAddr],
+    dns_servers: &[IpAddr],
+) -> String {
+    let mut script = String::from(
+        "/ip address remove [find where comment=\"vexa-vm\"]\n\
+         /ipv6 address remove [find where comment=\"vexa-vm\"]\n\
+         /ip route remove [find where comment=\"vexa-vm\"]\n\
+         /ipv6 route remove [find where comment=\"vexa-vm\"]\n",
+    );
+    for item in addresses {
+        match item.address {
+            IpAddr::V4(address) => script.push_str(&format!(
+                "/ip address add address={address}/{} interface=ether1 comment=\"vexa-vm\"\n",
+                item.prefix_length
+            )),
+            IpAddr::V6(address) => script.push_str(&format!(
+                "/ipv6 address add address={address}/{} interface=ether1 comment=\"vexa-vm\"\n",
+                item.prefix_length
+            )),
+        }
+    }
+    for gateway in gateways {
+        if gateway.is_ipv4() {
+            script.push_str(&format!(
+                "/ip route add dst-address=0.0.0.0/0 gateway={gateway} comment=\"vexa-vm\"\n"
+            ));
+        } else {
+            script.push_str(&format!(
+                "/ipv6 route add dst-address=::/0 gateway={gateway} comment=\"vexa-vm\"\n"
+            ));
+        }
+    }
+    if !dns_servers.is_empty() {
+        let servers = dns_servers
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>()
+            .join(",");
+        script.push_str(&format!("/ip dns set servers={}\n", routeros_string(&servers)));
+    }
+    script
 }
 
 async fn routeros_bootstrap(state: &AppState, vm: &Vm) -> AppResult<()> {
@@ -787,9 +850,7 @@ async fn routeros_bootstrap(state: &AppState, vm: &Vm) -> AppResult<()> {
     let addresses = state.db.vm_ip_addresses(&vm.id)?;
     let dns = state.db.dns_servers(None, Some(&vm.id))?;
     let routed = crate::services::routed_network::plan(vm)?;
-    let password = state
-        .db
-        .decrypt_vm_password(&vm.id, &state.security)?;
+    let password = state.db.decrypt_vm_password(&vm.id, &state.security)?;
     let mut script = String::from(
         "/ip address remove [find where comment=\"vexa-vm\"]\n\
          /ipv6 address remove [find where comment=\"vexa-vm\"]\n\
@@ -853,16 +914,11 @@ async fn routeros_bootstrap(state: &AppState, vm: &Vm) -> AppResult<()> {
         .collect::<Vec<_>>()
         .join(",");
     if !dns.is_empty() {
-        script.push_str(&format!(
-            "/ip dns set servers={}\n",
-            routeros_string(&dns)
-        ));
+        script.push_str(&format!("/ip dns set servers={}\n", routeros_string(&dns)));
     }
     if password.is_some() {
         let routed = routed.as_ref().ok_or_else(|| {
-            AppError::Conflict(
-                "automatic RouterOS credentials require Vexa routed IPv4 networking".into(),
-            )
+            AppError::Conflict("automatic RouterOS credentials require Vexa routed IPv4 networking".into())
         })?;
         script.push_str(&format!(
             "/ip service set [find where name=\"www\"] address={}/32 disabled=no port=80\n",
@@ -915,9 +971,7 @@ async fn routeros_rest_request(
     password: &str,
     body: Option<Value>,
 ) -> AppResult<(StatusCode, Value)> {
-    let mut request = client
-        .request(method, url)
-        .basic_auth(username, Some(password));
+    let mut request = client.request(method, url).basic_auth(username, Some(password));
     if let Some(body) = body {
         request = request.json(&body);
     }
@@ -938,9 +992,8 @@ async fn routeros_rest_request(
     let value = if bytes.is_empty() {
         json!([])
     } else {
-        serde_json::from_slice(&bytes).map_err(|_| {
-            AppError::Hypervisor("RouterOS REST response was not valid JSON".into())
-        })?
+        serde_json::from_slice(&bytes)
+            .map_err(|_| AppError::Hypervisor("RouterOS REST response was not valid JSON".into()))?
     };
     Ok((status, value))
 }
@@ -976,8 +1029,7 @@ async fn routeros_initialize_account(
         ));
     }
     let client = routeros_rest_client()?;
-    let desired_ready =
-        routeros_rest_authenticated(&client, routed, &vm.root_username, password).await?;
+    let desired_ready = routeros_rest_authenticated(&client, routed, &vm.root_username, password).await?;
     if !desired_ready {
         let (status, users) = routeros_rest_request(
             &client,
@@ -994,12 +1046,13 @@ async fn routeros_initialize_account(
                 status.as_u16()
             )));
         }
-        let users = users.as_array().ok_or_else(|| {
-            AppError::Hypervisor("RouterOS user inventory was not an array".into())
-        })?;
-        if !users.iter().any(|user| {
-            user.get("name").and_then(Value::as_str) == Some(vm.root_username.as_str())
-        }) {
+        let users = users
+            .as_array()
+            .ok_or_else(|| AppError::Hypervisor("RouterOS user inventory was not an array".into()))?;
+        if !users
+            .iter()
+            .any(|user| user.get("name").and_then(Value::as_str) == Some(vm.root_username.as_str()))
+        {
             let (status, _) = routeros_rest_request(
                 &client,
                 Method::PUT,
@@ -1134,12 +1187,7 @@ async fn routeros_health(state: &AppState, vm: &Vm) -> AppResult<()> {
     qga_return(&response).map(|_| ())
 }
 
-async fn routeros_exec_script(
-    state: &AppState,
-    vm: &Vm,
-    script: &str,
-    wait_for_exit: bool,
-) -> AppResult<()> {
+async fn routeros_exec_script(state: &AppState, vm: &Vm, script: &str, wait_for_exit: bool) -> AppResult<()> {
     if script.is_empty() || script.len() > 256 * 1024 {
         return Err(AppError::Validation(
             "RouterOS guest script must contain 1 through 262144 bytes".into(),
@@ -1254,15 +1302,15 @@ fn artifact_path(config: &Config, platform: GuestToolsPlatform) -> Option<PathBu
 }
 
 fn valid_artifact(path: &Path) -> bool {
-    fs::metadata(path)
-        .ok()
-        .is_some_and(|metadata| metadata.is_file() && metadata.len() > 0 && metadata.len() <= MAX_ARTIFACT_BYTES)
+    fs::metadata(path).ok().is_some_and(|metadata| {
+        metadata.is_file() && metadata.len() > 0 && metadata.len() <= MAX_ARTIFACT_BYTES
+    })
 }
 
 fn is_linux_family(value: &str) -> bool {
     [
-        "linux", "ubuntu", "debian", "kali", "fedora", "centos", "rhel", "rocky", "alma", "arch",
-        "opensuse", "sles",
+        "linux", "ubuntu", "debian", "kali", "fedora", "centos", "rhel", "rocky", "alma", "arch", "opensuse",
+        "sles",
     ]
     .iter()
     .any(|family| value.contains(family))
@@ -1453,8 +1501,14 @@ mod tests {
         let guest_key = STANDARD_NO_PAD.decode(encoded).expect("guest decodes secret");
         assert_eq!(host_key, guest_key);
 
-        let request = Request::signed("request-1", 1_700_000_000, STANDARD_NO_PAD.encode([7_u8; 24]), Command::Ping, &host_key)
-            .expect("host signs request");
+        let request = Request::signed(
+            "request-1",
+            1_700_000_000,
+            STANDARD_NO_PAD.encode([7_u8; 24]),
+            Command::Ping,
+            &host_key,
+        )
+        .expect("host signs request");
         let mut replay = vexa_guest_protocol::ReplayCache::new(128);
         let command = request
             .verify_and_decrypt(&guest_key, 1_700_000_000, 120, &mut replay)
@@ -1464,16 +1518,13 @@ mod tests {
 
     #[test]
     fn channel_errors_are_actionable_without_exposing_a_socket_path() {
-        let denied = channel_connect_error_message(&std::io::Error::from(
-            std::io::ErrorKind::PermissionDenied,
-        ));
+        let denied =
+            channel_connect_error_message(&std::io::Error::from(std::io::ErrorKind::PermissionDenied));
         assert!(denied.contains("group membership"));
         assert!(denied.contains("AppArmor or SELinux"));
         assert!(!denied.contains("/var/"));
 
-        let missing = channel_connect_error_message(&std::io::Error::from(
-            std::io::ErrorKind::NotFound,
-        ));
+        let missing = channel_connect_error_message(&std::io::Error::from(std::io::ErrorKind::NotFound));
         assert!(missing.contains("socket is absent"));
     }
 
@@ -1507,8 +1558,7 @@ mod tests {
             };
             write_frame(
                 &mut channel,
-                &Response::success(&stale_request, current.sent_at, health(), &guest_secret)
-                    .unwrap(),
+                &Response::success(&stale_request, current.sent_at, health(), &guest_secret).unwrap(),
             )
             .unwrap();
             write_frame(

@@ -111,6 +111,15 @@ upgrade and fails if it does not remain active through its post-start health win
 replacement restores the prior binary, secret, configuration, unit, enablement state, and running
 state.
 
+Address assignments are authoritative. After an administrator or API client adds or releases a VM
+address, the host sends the complete current address, gateway, and DNS inventory over the
+authenticated channel. Ubuntu-family guests publish `/etc/netplan/90-vexa-guest-tools.yaml`, verify
+it with `netplan generate`, and restore the previous managed file if apply fails. Windows reconciles
+the selected active adapter with native NetTCPIP and DNS cmdlets. RouterOS performs the equivalent
+replacement through its built-in QEMU Guest Agent. Existing unmanaged configuration outside the
+Vexa-owned Linux file is not edited, but settings for the same interface can be superseded by the
+managed netplan definition.
+
 See [`guest-tools/packaging/linux/install.sh`](../guest-tools/packaging/linux/install.sh) for the
 standalone installer.
 

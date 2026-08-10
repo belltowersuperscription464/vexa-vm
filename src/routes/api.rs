@@ -29,19 +29,17 @@ use crate::{
         CreateVmRequest, Firmware, PowerAction, ReinstallVmRequest, ResizeVmRequest, SnapshotRequest, VmImage,
     },
     models::{
-        AddressFamily, AdminRole, HypervisorNetworkSecurityPatch, InstallMode, IpBlacklistPatch,
-        IpAddressRecord, IpPoolPatch, IpScope, IpStatus, IsoImage, JobStatus, NewAuditEvent,
-        NewIpAbuseRecord, NewIpAddress, NewIpBlacklistEntry, NewIpPool, NewJob, NewVm,
-        NewVmFirewallRule, Vm,
+        AddressFamily, AdminRole, HypervisorNetworkSecurityPatch, InstallMode, IpAddressRecord,
+        IpBlacklistPatch, IpPoolPatch, IpScope, IpStatus, IsoImage, JobStatus, NewAuditEvent,
+        NewIpAbuseRecord, NewIpAddress, NewIpBlacklistEntry, NewIpPool, NewJob, NewVm, NewVmFirewallRule, Vm,
         VmFirewallRulePatch, VmNetworkSecurityPatch, VmPatch,
     },
     security::{hash_password, verify_password, vm_password_context},
     services::{
         iso_download,
         updater::{
-            read_durable_update_statuses, DurableUpdateOutcome, DurableUpdateStatus,
-            PublicRollbackPoint, RollbackPoint, UpdateComponent, UPDATE_REPOSITORY,
-            UPDATE_ROLLBACK_ROOT,
+            read_durable_update_statuses, DurableUpdateOutcome, DurableUpdateStatus, PublicRollbackPoint,
+            RollbackPoint, UpdateComponent, UPDATE_REPOSITORY, UPDATE_ROLLBACK_ROOT,
         },
     },
     state::{normalize_guest_locale, validate_ntp_server, validate_timezone_name, AppState},
@@ -144,8 +142,7 @@ impl<'de> Deserialize<'de> for CreateVmBody {
         let root_username_was_supplied = value
             .as_object()
             .is_some_and(|object| object.contains_key("root_username"));
-        let wire: CreateVmBodyWire =
-            serde_json::from_value(value).map_err(serde::de::Error::custom)?;
+        let wire: CreateVmBodyWire = serde_json::from_value(value).map_err(serde::de::Error::custom)?;
         Ok(Self {
             spec: wire.spec,
             password: wire.password,
@@ -573,11 +570,9 @@ pub async fn create_vm(
     auth.require("vms:write")?;
     let idempotency_key = idempotency_key(&headers)?;
     let request_fingerprint = create_vm_request_fingerprint(&input)?;
-    if let Some(response) = replay_create_vm_request(
-        &state,
-        idempotency_key.as_deref(),
-        &request_fingerprint,
-    )? {
+    if let Some(response) =
+        replay_create_vm_request(&state, idempotency_key.as_deref(), &request_fingerprint)?
+    {
         return Ok(response);
     }
     apply_vm_defaults(&state, &mut input)?;
@@ -601,12 +596,9 @@ pub async fn create_vm(
     if input.spec.bridge.is_none() {
         input.spec.bridge = Some(state.config.network_bridge.clone());
     }
-    let routed_network_created = crate::services::routed_network::configure_new_vm(
-        &state,
-        &mut input.spec,
-        &input.ip_addresses,
-    )
-    .await?;
+    let routed_network_created =
+        crate::services::routed_network::configure_new_vm(&state, &mut input.spec, &input.ip_addresses)
+            .await?;
     if builtin_routeros && !routed_network_created {
         return Err(AppError::Validation(
             "automatic RouterOS credentials require a routed public IPv4 /32".into(),
@@ -635,8 +627,7 @@ pub async fn create_vm(
     let manual_install = request.image.is_manual_installer();
     if manual_install && input.password.is_some() {
         return Err(AppError::Validation(
-            "manual installer ISOs cannot provision a guest password; set it inside the installer"
-                .into(),
+            "manual installer ISOs cannot provision a guest password; set it inside the installer".into(),
         ));
     }
     let supplied_password = input
@@ -660,11 +651,9 @@ pub async fn create_vm(
     // critical section. No hypervisor work runs in this request and this
     // handler never waits for the background worker.
     let create_reservation_guard = state.vm_create_reservation_lock.lock().await;
-    if let Some(response) = replay_create_vm_request(
-        &state,
-        idempotency_key.as_deref(),
-        &request_fingerprint,
-    )? {
+    if let Some(response) =
+        replay_create_vm_request(&state, idempotency_key.as_deref(), &request_fingerprint)?
+    {
         return Ok(response);
     }
     if let Some(existing) = state.db.get_vm(&input.spec.name)? {
@@ -700,10 +689,8 @@ pub async fn create_vm(
                 &state.config.guest_tools_version,
                 &state.security,
             )?;
-            request.guest_tools_socket = Some(crate::services::guest_tools::socket_path(
-                &state.config,
-                &vm.id,
-            )?);
+            request.guest_tools_socket =
+                Some(crate::services::guest_tools::socket_path(&state.config, &vm.id)?);
         }
         for (index, address_or_id) in input.ip_addresses.iter().enumerate() {
             let address = state
@@ -885,12 +872,8 @@ pub async fn patch_vm(
     };
     let guest_tools = if let Some(hostname) = requested_hostname {
         Some(
-            crate::services::guest_tools::try_apply(
-                &state,
-                &vm,
-                GuestCommand::SetHostname { hostname },
-            )
-            .await,
+            crate::services::guest_tools::try_apply(&state, &vm, GuestCommand::SetHostname { hostname })
+                .await,
         )
     } else {
         None
@@ -1047,16 +1030,8 @@ pub async fn delete_vm(
         .flatten()
     {
         let matches_target = existing.kind == "vm.delete"
-            && (existing
-                .payload
-                .get("target_vm_id")
-                .and_then(Value::as_str)
-                == Some(id.as_str())
-                || existing
-                    .payload
-                    .get("target_vm_name")
-                    .and_then(Value::as_str)
-                    == Some(id.as_str())
+            && (existing.payload.get("target_vm_id").and_then(Value::as_str) == Some(id.as_str())
+                || existing.payload.get("target_vm_name").and_then(Value::as_str) == Some(id.as_str())
                 || existing.vm_id.as_deref() == Some(id.as_str()));
         if !matches_target {
             return Err(AppError::Conflict(
@@ -1185,7 +1160,10 @@ pub async fn reinstall_vm(
         &input.image_id,
         input.start,
         input.install_guest_tools,
-        input.password.as_deref().is_some_and(|value| !value.trim().is_empty()),
+        input
+            .password
+            .as_deref()
+            .is_some_and(|value| !value.trim().is_empty()),
     )?;
     if let Some(existing) = idempotency_key
         .as_deref()
@@ -1219,8 +1197,7 @@ pub async fn reinstall_vm(
     let manual_install = image.is_manual_installer();
     if manual_install && input.password.is_some() {
         return Err(AppError::Validation(
-            "manual installer ISOs cannot provision a guest password; set it inside the installer"
-                .into(),
+            "manual installer ISOs cannot provision a guest password; set it inside the installer".into(),
         ));
     }
     let password_envelope = if let Some(password) = input.password.as_deref() {
@@ -1233,23 +1210,17 @@ pub async fn reinstall_vm(
     } else {
         None
     };
-    if !manual_install
-        && password_envelope.is_none()
-        && state.db.vm_password_envelope(&vm.id)?.is_none()
-    {
+    if !manual_install && password_envelope.is_none() && state.db.vm_password_envelope(&vm.id)?.is_none() {
         return Err(AppError::Validation(
             "an automated reinstall requires a guest password because this VM has no stored credential"
                 .into(),
         ));
     }
     let current_guest_tools = state.db.vm_guest_tools(&vm.id)?;
-    let builtin_guest_integration =
-        crate::services::guest_tools::is_builtin_routeros_image(&image_record);
+    let builtin_guest_integration = crate::services::guest_tools::is_builtin_routeros_image(&image_record);
     let wants_guest_tools = input.install_guest_tools && !builtin_guest_integration;
-    let disable_guest_tools_after_success = current_guest_tools
-        .as_ref()
-        .is_some_and(|record| record.enabled)
-        && !wants_guest_tools;
+    let disable_guest_tools_after_success =
+        current_guest_tools.as_ref().is_some_and(|record| record.enabled) && !wants_guest_tools;
     let guest_tools_stage = stage_reinstall_guest_tools(
         &state,
         &vm,
@@ -1257,9 +1228,7 @@ pub async fn reinstall_vm(
         wants_guest_tools,
         &request_fingerprint,
     )?;
-    let guest_tools_socket = guest_tools_stage
-        .as_ref()
-        .map(|stage| stage.socket_path.clone());
+    let guest_tools_socket = guest_tools_stage.as_ref().map(|stage| stage.socket_path.clone());
     let payload = json!({
         "request": ReinstallVmRequest {
             image,
@@ -1542,10 +1511,7 @@ pub async fn get_vm_guest_tools(
 ) -> AppResult<Response> {
     auth.require("vms:read")?;
     let vm = required_vm(&state, &id)?;
-    let status = crate::services::guest_tools::admin_status_for_vm(
-        &vm,
-        state.db.vm_guest_tools(&vm.id)?,
-    );
+    let status = crate::services::guest_tools::admin_status_for_vm(&vm, state.db.vm_guest_tools(&vm.id)?);
     Ok(Json(json!({ "guest_tools": status })).into_response())
 }
 
@@ -1566,10 +1532,7 @@ pub async fn probe_vm_guest_tools(
         result.applied,
         json!({ "guest_tools": &result }),
     );
-    let status = crate::services::guest_tools::admin_status_for_vm(
-        &vm,
-        state.db.vm_guest_tools(&vm.id)?,
-    );
+    let status = crate::services::guest_tools::admin_status_for_vm(&vm, state.db.vm_guest_tools(&vm.id)?);
     Ok(Json(json!({ "result": result, "guest_tools": status })).into_response())
 }
 
@@ -1733,12 +1696,9 @@ pub async fn create_vm_firewall_rule(
 ) -> AppResult<Response> {
     auth.require("vms:write")?;
     let vm = required_vm(&state, &id)?;
-    let rule = state.db.create_vm_firewall_rule_owned(
-        &vm.id,
-        &input,
-        "admin",
-        Some(&auth.actor_id),
-    )?;
+    let rule = state
+        .db
+        .create_vm_firewall_rule_owned(&vm.id, &input, "admin", Some(&auth.actor_id))?;
     let enforcement = crate::services::firewall::reconcile_vm_fail_closed(&state, &vm).await?;
     audit(
         &state,
@@ -1749,7 +1709,11 @@ pub async fn create_vm_firewall_rule(
         true,
         json!({ "rule_id": rule.id, "enabled": rule.enabled }),
     );
-    Ok((StatusCode::CREATED, Json(json!({ "rule": rule, "enforcement": enforcement }))).into_response())
+    Ok((
+        StatusCode::CREATED,
+        Json(json!({ "rule": rule, "enforcement": enforcement })),
+    )
+        .into_response())
 }
 
 pub async fn patch_vm_firewall_rule(
@@ -1824,9 +1788,7 @@ pub async fn patch_hypervisor_network_security(
                 Some(&auth.actor_id),
             );
             let rollback_apply = match rollback {
-                Ok(_) => crate::services::firewall::reconcile(&state)
-                    .await
-                    .map(|_| ()),
+                Ok(_) => crate::services::firewall::reconcile(&state).await.map(|_| ()),
                 Err(error) => Err(error),
             };
             return Err(AppError::Conflict(match rollback_apply {
@@ -2030,19 +1992,13 @@ pub async fn create_ip_pool(
         }
         materialized += 1;
     }
-    let network_security = if state
-        .db
-        .hypervisor_network_security()?
-        .ip_ownership_guard_enabled
-    {
+    let network_security = if state.db.hypervisor_network_security()?.ip_ownership_guard_enabled {
         match crate::services::firewall::reconcile(&state).await {
             Ok(summary) => Some(summary),
             Err(apply_error) => {
                 let rollback = state.db.delete_ip_pool_with_unassigned_addresses(&pool.id);
                 let rollback_apply = match rollback {
-                    Ok(()) => crate::services::firewall::reconcile(&state)
-                        .await
-                        .map(|_| ()),
+                    Ok(()) => crate::services::firewall::reconcile(&state).await.map(|_| ()),
                     Err(error) => Err(error),
                 };
                 return Err(AppError::Conflict(match rollback_apply {
@@ -2122,11 +2078,7 @@ pub async fn delete_ip_pool(
 ) -> AppResult<Response> {
     auth.require("network:write")?;
     state.db.delete_ip_pool(&id)?;
-    if state
-        .db
-        .hypervisor_network_security()?
-        .ip_ownership_guard_enabled
-    {
+    if state.db.hypervisor_network_security()?.ip_ownership_guard_enabled {
         crate::services::firewall::reconcile(&state)
             .await
             .map_err(|error| {
@@ -2227,6 +2179,12 @@ pub async fn patch_ip_address(
     };
     let affected_vm_id = input.vm_id.as_deref().or(previous_vm_id.as_deref());
     let network_security = reconcile_ownership_after_address_change(&state, affected_vm_id).await?;
+    let guest_tools = if let Some(vm_id) = affected_vm_id {
+        let vm = required_vm(&state, vm_id)?;
+        Some(crate::services::guest_tools::apply_network_inventory(&state, &vm).await?)
+    } else {
+        None
+    };
     audit(
         &state,
         &auth,
@@ -2234,9 +2192,15 @@ pub async fn patch_ip_address(
         "ip_address",
         Some(&record.id),
         true,
-        json!({ "address": record.address, "status": record.status }),
+        json!({ "address": record.address, "status": record.status, "guest_tools": &guest_tools }),
     );
-    Ok(Json(json!({ "address": record, "network_security": network_security })).into_response())
+    Ok(Json(json!({
+        "address": record,
+        "network_security": network_security,
+        "guest_agent_applied": guest_tools.as_ref().is_some_and(|result| result.applied),
+        "guest_tools": guest_tools,
+    }))
+    .into_response())
 }
 
 pub async fn get_ip_address(
@@ -2266,8 +2230,9 @@ pub async fn assign_ip_address(
     let address = state
         .db
         .assign_ip(&current.address, &input.vm_id, input.primary)?;
-    let network_security =
-        reconcile_ownership_after_address_change(&state, Some(&input.vm_id)).await?;
+    let network_security = reconcile_ownership_after_address_change(&state, Some(&input.vm_id)).await?;
+    let vm = required_vm(&state, &input.vm_id)?;
+    let guest_tools = crate::services::guest_tools::apply_network_inventory(&state, &vm).await?;
     audit(
         &state,
         &auth,
@@ -2275,9 +2240,15 @@ pub async fn assign_ip_address(
         "ip_address",
         Some(&address.id),
         true,
-        json!({ "vm_id": input.vm_id }),
+        json!({ "vm_id": input.vm_id, "guest_tools": &guest_tools }),
     );
-    Ok(Json(json!({ "address": address, "network_security": network_security })).into_response())
+    Ok(Json(json!({
+        "address": address,
+        "network_security": network_security,
+        "guest_agent_applied": guest_tools.applied,
+        "guest_tools": guest_tools,
+    }))
+    .into_response())
 }
 
 pub async fn release_ip_address(
@@ -2294,6 +2265,12 @@ pub async fn release_ip_address(
     let address = state.db.release_ip(&current.address)?;
     let network_security =
         reconcile_ownership_after_address_change(&state, previous_vm_id.as_deref()).await?;
+    let guest_tools = if let Some(vm_id) = previous_vm_id.as_deref() {
+        let vm = required_vm(&state, vm_id)?;
+        Some(crate::services::guest_tools::apply_network_inventory(&state, &vm).await?)
+    } else {
+        None
+    };
     audit(
         &state,
         &auth,
@@ -2301,9 +2278,15 @@ pub async fn release_ip_address(
         "ip_address",
         Some(&address.id),
         true,
-        json!({}),
+        json!({ "guest_tools": &guest_tools }),
     );
-    Ok(Json(json!({ "address": address, "network_security": network_security })).into_response())
+    Ok(Json(json!({
+        "address": address,
+        "network_security": network_security,
+        "guest_agent_applied": guest_tools.as_ref().is_some_and(|result| result.applied),
+        "guest_tools": guest_tools,
+    }))
+    .into_response())
 }
 
 pub async fn delete_ip_address(
@@ -2688,7 +2671,10 @@ pub async fn verify_iso(
     if !image.metadata.is_object() {
         image.metadata = json!({});
     }
-    if matches!(image.install_mode, InstallMode::CloudInit | InstallMode::Automatic) {
+    if matches!(
+        image.install_mode,
+        InstallMode::CloudInit | InstallMode::Automatic
+    ) {
         let local_path = image
             .local_path
             .as_deref()
@@ -3062,8 +3048,7 @@ pub async fn approve_update(
     }
     if !update_executor_available() {
         return Err(AppError::Conflict(
-            "the privileged signed-update executor is not installed and active on this node"
-                .into(),
+            "the privileged signed-update executor is not installed and active on this node".into(),
         ));
     }
     let updater = required_update_coordinator(&state)?;
@@ -3112,8 +3097,7 @@ pub async fn approve_rollback(
     }
     if !update_executor_available() {
         return Err(AppError::Conflict(
-            "the privileged signed-update executor is not installed and active on this node"
-                .into(),
+            "the privileged signed-update executor is not installed and active on this node".into(),
         ));
     }
 
@@ -3121,9 +3105,8 @@ pub async fn approve_rollback(
     // updater service. Client values are used only as stale-view guards; no
     // snapshot path, digest, release, size or component is client-selectable.
     let statuses = read_durable_update_statuses()?;
-    let public_point = eligible_update_rollback_point(&statuses).ok_or_else(|| {
-        AppError::Conflict("no eligible application rollback point is available".into())
-    })?;
+    let public_point = eligible_update_rollback_point(&statuses)
+        .ok_or_else(|| AppError::Conflict("no eligible application rollback point is available".into()))?;
     if input.expected_activation_id != public_point.activation_id
         || input.expected_previous_release != public_point.previous_release
     {
@@ -4047,10 +4030,7 @@ fn enrich_vm(state: &AppState, vm: Vm) -> AppResult<Value> {
     );
     object.insert(
         "guest_tools".into(),
-        crate::services::guest_tools::admin_status_for_vm(
-            &vm,
-            state.db.vm_guest_tools(&vm.id)?,
-        ),
+        crate::services::guest_tools::admin_status_for_vm(&vm, state.db.vm_guest_tools(&vm.id)?),
     );
     Ok(value)
 }
@@ -4071,9 +4051,7 @@ pub(crate) fn normalize_ssh_keys(values: Vec<String>) -> AppResult<Vec<String>> 
         }
         if key.len() > 16 * 1024
             || key.chars().any(|character| matches!(character, '\r' | '\n'))
-            || !(key.starts_with("ssh-")
-                || key.starts_with("ecdsa-")
-                || key.starts_with("sk-"))
+            || !(key.starts_with("ssh-") || key.starts_with("ecdsa-") || key.starts_with("sk-"))
         {
             return Err(AppError::Validation(
                 "one or more SSH public keys are invalid".into(),
@@ -4272,12 +4250,7 @@ fn apply_vm_defaults(state: &AppState, input: &mut CreateVmBody) -> AppResult<()
     }
     if input.spec.firmware.trim().is_empty() || input.spec.firmware.eq_ignore_ascii_case("auto") {
         let image_requires_uefi = selected_image.as_ref().is_some_and(|image| image.uefi);
-        input.spec.firmware = if image_requires_uefi {
-            "uefi"
-        } else {
-            "bios"
-        }
-        .into();
+        input.spec.firmware = if image_requires_uefi { "uefi" } else { "bios" }.into();
     }
     if input.spec.network_limit_mbps.is_none() {
         input.spec.network_limit_mbps = state.setting_u64("network", "default_port_limit_mbps")?;
@@ -4518,9 +4491,7 @@ pub(super) fn vm_image_from_iso(image: IsoImage) -> AppResult<VmImage> {
             .filter(|value| !value.trim().is_empty())
             .map(PathBuf::from)
             .ok_or_else(|| {
-                AppError::Conflict(
-                    "automatic Windows installer has no verified virtio driver ISO".into(),
-                )
+                AppError::Conflict("automatic Windows installer has no verified virtio driver ISO".into())
             })?;
         let image_index = image
             .metadata
@@ -4538,9 +4509,7 @@ pub(super) fn vm_image_from_iso(image: IsoImage) -> AppResult<VmImage> {
             .to_owned();
         if driver_version.is_empty()
             || driver_version.len() > 16
-            || !driver_version
-                .bytes()
-                .all(|byte| byte.is_ascii_alphanumeric())
+            || !driver_version.bytes().all(|byte| byte.is_ascii_alphanumeric())
         {
             return Err(AppError::Conflict(
                 "automatic Windows installer driver version is invalid".into(),
@@ -4683,18 +4652,16 @@ fn audit(
 /// this in the API response prevents the panel from offering a free-looking
 /// address that a broader active blacklist CIDR will reject at assignment
 /// time; the database remains the final authority for the actual assignment.
-fn address_values_with_blacklist(
-    state: &AppState,
-    items: Vec<IpAddressRecord>,
-) -> AppResult<Vec<Value>> {
+fn address_values_with_blacklist(state: &AppState, items: Vec<IpAddressRecord>) -> AppResult<Vec<Value>> {
     let networks = state
         .db
         .list_ip_blacklist_entries(true)?
         .into_iter()
         .map(|entry| {
-            entry.cidr.parse::<IpNet>().map_err(|_| {
-                AppError::Internal(format!("stored blacklist CIDR is invalid: {}", entry.cidr))
-            })
+            entry
+                .cidr
+                .parse::<IpNet>()
+                .map_err(|_| AppError::Internal(format!("stored blacklist CIDR is invalid: {}", entry.cidr)))
         })
         .collect::<AppResult<Vec<_>>>()?;
     let pool_enabled = state
@@ -4714,9 +4681,10 @@ fn address_values_with_allocation_status(
     items
         .into_iter()
         .map(|item| {
-            let address = item.address.parse::<IpAddr>().map_err(|_| {
-                AppError::Internal(format!("stored IP address is invalid: {}", item.address))
-            })?;
+            let address = item
+                .address
+                .parse::<IpAddr>()
+                .map_err(|_| AppError::Internal(format!("stored IP address is invalid: {}", item.address)))?;
             let blacklisted = networks.iter().any(|network| network.contains(&address));
             // An imported routed pool is deliberately disabled: it remains
             // visible as complete node inventory, while ordinary bridged VM
@@ -5098,9 +5066,7 @@ fn required_update_coordinator(
 /// successful activation that produced it. A running, failed, recovery or
 /// subsequent rollback operation makes older points ineligible even if a stale
 /// status file remains on disk.
-fn eligible_update_rollback_point(
-    statuses: &[DurableUpdateStatus],
-) -> Option<PublicRollbackPoint> {
+fn eligible_update_rollback_point(statuses: &[DurableUpdateStatus]) -> Option<PublicRollbackPoint> {
     let latest = statuses.first()?;
     if statuses
         .get(1)
@@ -5110,9 +5076,7 @@ fn eligible_update_rollback_point(
         // of two equally recent privileged operations is authoritative.
         return None;
     }
-    if latest.operation.as_deref() != Some("activate")
-        || latest.outcome != DurableUpdateOutcome::Succeeded
-    {
+    if latest.operation.as_deref() != Some("activate") || latest.outcome != DurableUpdateOutcome::Succeeded {
         return None;
     }
     latest.rollback_point.clone()
@@ -5151,9 +5115,8 @@ fn update_executor_available() -> bool {
             return false;
         }
     }
-    serde_json::from_reader::<_, UpdateExecutorReady>(file).is_ok_and(|marker| {
-        marker.schema_version == 1 && marker.ready && marker.helper_schema == 1
-    })
+    serde_json::from_reader::<_, UpdateExecutorReady>(file)
+        .is_ok_and(|marker| marker.schema_version == 1 && marker.ready && marker.helper_schema == 1)
 }
 
 fn default_customer_scopes() -> Vec<String> {
@@ -5254,18 +5217,8 @@ mod image_catalog_tests {
     #[test]
     fn disabled_pool_addresses_are_visible_but_never_offered_for_new_allocation() {
         let items = vec![
-            address_for_allocation_test(
-                "203.0.113.2",
-                Some("legacy-routed"),
-                IpStatus::Free,
-                None,
-            ),
-            address_for_allocation_test(
-                "203.0.113.3",
-                Some("ordinary-bridge"),
-                IpStatus::Free,
-                None,
-            ),
+            address_for_allocation_test("203.0.113.2", Some("legacy-routed"), IpStatus::Free, None),
+            address_for_allocation_test("203.0.113.3", Some("ordinary-bridge"), IpStatus::Free, None),
             address_for_allocation_test(
                 "203.0.113.4",
                 Some("legacy-routed"),
@@ -5273,10 +5226,7 @@ mod image_catalog_tests {
                 Some("existing-vm"),
             ),
         ];
-        let pools = BTreeMap::from([
-            ("legacy-routed".into(), false),
-            ("ordinary-bridge".into(), true),
-        ]);
+        let pools = BTreeMap::from([("legacy-routed".into(), false), ("ordinary-bridge".into(), true)]);
         let values = address_values_with_allocation_status(items, &[], &pools).unwrap();
 
         assert_eq!(values.len(), 3, "disabled-pool inventory must remain visible");

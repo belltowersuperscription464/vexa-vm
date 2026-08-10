@@ -34,6 +34,13 @@ const RESPONSE_ENCRYPTION_DOMAIN: &[u8] = b"VEXA-GUEST-RESPONSE-ENC-V2\0";
 
 type HmacSha256 = Hmac<Sha256>;
 
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct NetworkAddress {
+    pub address: IpAddr,
+    pub prefix_length: u8,
+}
+
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(tag = "action", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Command {
@@ -51,6 +58,15 @@ pub enum Command {
         interface: Option<String>,
         servers: Vec<IpAddr>,
     },
+    SetNetwork {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        interface: Option<String>,
+        addresses: Vec<NetworkAddress>,
+        #[serde(default)]
+        gateways: Vec<IpAddr>,
+        #[serde(default)]
+        dns_servers: Vec<IpAddr>,
+    },
     SetSshKeys {
         username: String,
         authorized_keys: Vec<String>,
@@ -67,6 +83,7 @@ impl Command {
             Self::SetPassword { .. } => "set_password",
             Self::SetHostname { .. } => "set_hostname",
             Self::SetDns { .. } => "set_dns",
+            Self::SetNetwork { .. } => "set_network",
             Self::SetSshKeys { .. } => "set_ssh_keys",
             Self::Shutdown => "shutdown",
             Self::Reboot => "reboot",
@@ -100,9 +117,7 @@ impl Command {
                         || interface.len() > 128
                         || interface.chars().any(char::is_control)
                     {
-                        return Err(ProtocolError::InvalidCommand(
-                            "interface name is invalid".into(),
-                        ));
+                        return Err(ProtocolError::InvalidCommand("interface name is invalid".into()));
                     }
                 }
                 if servers.is_empty() || servers.len() > 8 {
@@ -114,6 +129,56 @@ impl Command {
                     return Err(ProtocolError::InvalidCommand(
                         "unspecified DNS addresses are not accepted".into(),
                     ));
+                }
+                Ok(())
+            }
+            Self::SetNetwork {
+                interface,
+                addresses,
+                gateways,
+                dns_servers,
+            } => {
+                validate_interface(interface.as_deref())?;
+                if addresses.len() > 64 {
+                    return Err(ProtocolError::InvalidCommand(
+                        "at most 64 network addresses are accepted".into(),
+                    ));
+                }
+                let mut unique = HashSet::new();
+                for item in addresses {
+                    let maximum = if item.address.is_ipv4() { 32 } else { 128 };
+                    if item.prefix_length > maximum
+                        || item.address.is_unspecified()
+                        || item.address.is_loopback()
+                        || item.address.is_multicast()
+                        || !unique.insert((item.address, item.prefix_length))
+                    {
+                        return Err(ProtocolError::InvalidCommand(
+                            "network address or prefix is invalid or duplicated".into(),
+                        ));
+                    }
+                }
+                if gateways.len() > 2 || dns_servers.len() > 8 {
+                    return Err(ProtocolError::InvalidCommand(
+                        "at most one gateway per family and 8 DNS servers are accepted".into(),
+                    ));
+                }
+                let mut gateway_families = HashSet::new();
+                for gateway in gateways {
+                    if gateway.is_unspecified()
+                        || gateway.is_loopback()
+                        || gateway.is_multicast()
+                        || !gateway_families.insert(gateway.is_ipv4())
+                    {
+                        return Err(ProtocolError::InvalidCommand(
+                            "gateway is invalid or duplicated for its address family".into(),
+                        ));
+                    }
+                }
+                if dns_servers.iter().any(|address| {
+                    address.is_unspecified() || address.is_loopback() || address.is_multicast()
+                }) {
+                    return Err(ProtocolError::InvalidCommand("DNS address is invalid".into()));
                 }
                 Ok(())
             }
@@ -134,6 +199,15 @@ impl Command {
             }
         }
     }
+}
+
+fn validate_interface(interface: Option<&str>) -> Result<(), ProtocolError> {
+    if let Some(interface) = interface {
+        if interface.is_empty() || interface.len() > 128 || interface.chars().any(char::is_control) {
+            return Err(ProtocolError::InvalidCommand("interface name is invalid".into()));
+        }
+    }
+    Ok(())
 }
 
 impl std::fmt::Debug for Command {
@@ -235,12 +309,7 @@ impl Request {
         if skew > max_clock_skew_seconds {
             return Err(ProtocolError::Expired);
         }
-        verify_json(
-            REQUEST_DOMAIN,
-            &self.unsigned(),
-            secret,
-            &self.signature,
-        )?;
+        verify_json(REQUEST_DOMAIN, &self.unsigned(), secret, &self.signature)?;
         replay_cache.accept(&self.request_id, &self.nonce, now, max_clock_skew_seconds)?;
         let command: Command = decrypt_json(
             REQUEST_ENCRYPTION_DOMAIN,
@@ -320,12 +389,7 @@ pub enum ResponseData {
 impl ResponseData {
     fn validate(&self) -> Result<(), ProtocolError> {
         match self {
-            Self::Pong { agent_version } => validate_response_text(
-                "agent version",
-                agent_version,
-                64,
-                false,
-            ),
+            Self::Pong { agent_version } => validate_response_text("agent version", agent_version, 64, false),
             Self::Health {
                 agent_version,
                 operating_system,
@@ -346,9 +410,7 @@ impl ResponseData {
                 }
                 Ok(())
             }
-            Self::Action { message, .. } => {
-                validate_response_text("action message", message, 1024, true)
-            }
+            Self::Action { message, .. } => validate_response_text("action message", message, 1024, true),
         }
     }
 }
@@ -365,9 +427,7 @@ impl ErrorBody {
         if self.code.is_empty()
             || self.code.len() > 64
             || !self.code.bytes().all(|byte| {
-                byte.is_ascii_lowercase()
-                    || byte.is_ascii_digit()
-                    || matches!(byte, b'_' | b'-' | b'.')
+                byte.is_ascii_lowercase() || byte.is_ascii_digit() || matches!(byte, b'_' | b'-' | b'.')
             })
         {
             return Err(ProtocolError::InvalidEnvelope(
@@ -477,12 +537,7 @@ impl Response {
             ));
         }
         validate_ciphertext(&self.encrypted_payload, "response")?;
-        verify_json(
-            RESPONSE_DOMAIN,
-            &self.unsigned(),
-            secret,
-            &self.signature,
-        )?;
+        verify_json(RESPONSE_DOMAIN, &self.unsigned(), secret, &self.signature)?;
         let payload: ResponsePayload = decrypt_json(
             RESPONSE_ENCRYPTION_DOMAIN,
             &self.request_nonce,
@@ -510,6 +565,7 @@ impl Response {
                         Command::SetPassword { .. }
                             | Command::SetHostname { .. }
                             | Command::SetDns { .. }
+                            | Command::SetNetwork { .. }
                             | Command::SetSshKeys { .. }
                             | Command::Shutdown
                             | Command::Reboot,
@@ -614,9 +670,7 @@ impl ReplayCache {
     ) -> Result<(), ProtocolError> {
         while let Some((timestamp, key)) = self.order.front() {
             let maximum_age = max_age_seconds.min(i64::MAX as u64) as i64;
-            if timestamp.saturating_add(maximum_age) >= now
-                && self.order.len() < self.capacity
-            {
+            if timestamp.saturating_add(maximum_age) >= now && self.order.len() < self.capacity {
                 break;
             }
             self.seen.remove(key);
@@ -632,10 +686,7 @@ impl ReplayCache {
     }
 }
 
-pub fn write_frame<W: Write, T: Serialize>(
-    writer: &mut W,
-    value: &T,
-) -> Result<(), ProtocolError> {
+pub fn write_frame<W: Write, T: Serialize>(writer: &mut W, value: &T) -> Result<(), ProtocolError> {
     let payload = serde_json::to_vec(value)?;
     if payload.len() > MAX_FRAME_BYTES {
         return Err(ProtocolError::FrameTooLarge(payload.len()));
@@ -728,8 +779,7 @@ fn encryption_material(
             "nonce must decode to 16 through 64 bytes".into(),
         ));
     }
-    let mut key_mac =
-        <HmacSha256 as Mac>::new_from_slice(secret).map_err(|_| ProtocolError::WeakSecret)?;
+    let mut key_mac = <HmacSha256 as Mac>::new_from_slice(secret).map_err(|_| ProtocolError::WeakSecret)?;
     key_mac.update(domain);
     key_mac.update(b"key");
     let derived = key_mac.finalize().into_bytes();
@@ -772,14 +822,9 @@ fn validate_ciphertext(value: &str, label: &str) -> Result<(), ProtocolError> {
     Ok(())
 }
 
-fn sign_json<T: Serialize>(
-    domain: &[u8],
-    value: &T,
-    secret: &[u8],
-) -> Result<String, ProtocolError> {
+fn sign_json<T: Serialize>(domain: &[u8], value: &T, secret: &[u8]) -> Result<String, ProtocolError> {
     let payload = serde_json::to_vec(value)?;
-    let mut mac =
-        <HmacSha256 as Mac>::new_from_slice(secret).map_err(|_| ProtocolError::WeakSecret)?;
+    let mut mac = <HmacSha256 as Mac>::new_from_slice(secret).map_err(|_| ProtocolError::WeakSecret)?;
     mac.update(domain);
     mac.update(&payload);
     Ok(STANDARD_NO_PAD.encode(mac.finalize().into_bytes()))
@@ -795,8 +840,7 @@ fn verify_json<T: Serialize>(
         .decode(signature)
         .map_err(|_| ProtocolError::Authentication)?;
     let payload = serde_json::to_vec(value)?;
-    let mut mac =
-        <HmacSha256 as Mac>::new_from_slice(secret).map_err(|_| ProtocolError::WeakSecret)?;
+    let mut mac = <HmacSha256 as Mac>::new_from_slice(secret).map_err(|_| ProtocolError::WeakSecret)?;
     mac.update(domain);
     mac.update(&payload);
     mac.verify_slice(&signature)
@@ -883,9 +927,7 @@ fn validate_response_text(
         || value.len() > maximum_bytes
         || value.chars().any(char::is_control)
     {
-        return Err(ProtocolError::InvalidEnvelope(format!(
-            "{label} is invalid"
-        )));
+        return Err(ProtocolError::InvalidEnvelope(format!("{label} is invalid")));
     }
     Ok(())
 }
@@ -925,8 +967,8 @@ mod tests {
 
     #[test]
     fn signed_request_round_trip_and_replay_rejection() {
-        let request = Request::signed("req-1", 1_700_000_000, NONCE, Command::Ping, SECRET)
-            .expect("sign request");
+        let request =
+            Request::signed("req-1", 1_700_000_000, NONCE, Command::Ping, SECRET).expect("sign request");
         let mut cache = ReplayCache::new(16);
         let command = request
             .verify_and_decrypt(SECRET, 1_700_000_010, 120, &mut cache)
@@ -940,8 +982,8 @@ mod tests {
 
     #[test]
     fn tampering_is_rejected() {
-        let mut request = Request::signed("req-2", 1_700_000_000, NONCE, Command::Ping, SECRET)
-            .expect("sign request");
+        let mut request =
+            Request::signed("req-2", 1_700_000_000, NONCE, Command::Ping, SECRET).expect("sign request");
         let replacement = if request.encrypted_command.starts_with('A') {
             "B"
         } else {
@@ -949,20 +991,15 @@ mod tests {
         };
         request.encrypted_command.replace_range(0..1, replacement);
         assert!(matches!(
-            request.verify_and_decrypt(
-                SECRET,
-                1_700_000_010,
-                120,
-                &mut ReplayCache::new(16)
-            ),
+            request.verify_and_decrypt(SECRET, 1_700_000_010, 120, &mut ReplayCache::new(16)),
             Err(ProtocolError::Authentication)
         ));
     }
 
     #[test]
     fn response_is_bound_to_request_and_nonce() {
-        let request = Request::signed("req-3", 1_700_000_000, NONCE, Command::Health, SECRET)
-            .expect("sign request");
+        let request =
+            Request::signed("req-3", 1_700_000_000, NONCE, Command::Health, SECRET).expect("sign request");
         let response = Response::success(
             &request,
             1_700_000_001,
@@ -1018,12 +1055,7 @@ mod tests {
         assert!(!wire.contains(password));
         assert!(!wire.contains("set_password"));
         let decrypted = request
-            .verify_and_decrypt(
-                SECRET,
-                1_700_000_001,
-                120,
-                &mut ReplayCache::new(16),
-            )
+            .verify_and_decrypt(SECRET, 1_700_000_001, 120, &mut ReplayCache::new(16))
             .expect("decrypt request");
         assert!(matches!(
             decrypted,
@@ -1033,8 +1065,8 @@ mod tests {
 
     #[test]
     fn response_type_and_freshness_are_bound_to_the_request() {
-        let request = Request::signed("req-kind", 1_700_000_000, NONCE, Command::Health, SECRET)
-            .expect("sign request");
+        let request =
+            Request::signed("req-kind", 1_700_000_000, NONCE, Command::Health, SECRET).expect("sign request");
         let response = Response::success(
             &request,
             1_700_000_001,
@@ -1077,8 +1109,8 @@ mod tests {
 
     #[test]
     fn response_payloads_are_bounded_before_signing_or_acceptance() {
-        let request = Request::signed("req-bounds", 1_700_000_000, NONCE, Command::Ping, SECRET)
-            .expect("sign request");
+        let request =
+            Request::signed("req-bounds", 1_700_000_000, NONCE, Command::Ping, SECRET).expect("sign request");
         assert!(Response::success(
             &request,
             1_700_000_001,
@@ -1088,14 +1120,7 @@ mod tests {
             SECRET,
         )
         .is_err());
-        assert!(Response::failure(
-            &request,
-            1_700_000_001,
-            "INVALID CODE",
-            "failure",
-            SECRET,
-        )
-        .is_err());
+        assert!(Response::failure(&request, 1_700_000_001, "INVALID CODE", "failure", SECRET,).is_err());
     }
 
     #[test]

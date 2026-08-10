@@ -28,6 +28,7 @@ pub struct Policy {
     pub password: bool,
     pub hostname: bool,
     pub dns: bool,
+    pub network: bool,
     pub ssh_keys: bool,
     pub power: bool,
     pub allowed_users: Vec<String>,
@@ -43,6 +44,7 @@ impl Default for Policy {
             password: false,
             hostname: false,
             dns: false,
+            network: false,
             ssh_keys: false,
             power: false,
             allowed_users: Vec::new(),
@@ -71,8 +73,8 @@ impl Default for AgentConfig {
 
 impl AgentConfig {
     pub fn load(path: &Path) -> Result<Self> {
-        let bytes = fs::read(path)
-            .with_context(|| format!("failed to read configuration {}", path.display()))?;
+        let bytes =
+            fs::read(path).with_context(|| format!("failed to read configuration {}", path.display()))?;
         let config: Self = serde_json::from_slice(&bytes)
             .with_context(|| format!("invalid configuration {}", path.display()))?;
         config.validate()?;
@@ -213,10 +215,9 @@ mod tests {
 
     #[test]
     fn omitted_policy_is_deny_by_default() {
-        let config: AgentConfig = serde_json::from_str(
-            r#"{"channel_path":"channel","secret_file":"secret"}"#,
-        )
-        .expect("parse minimal config");
+        let config: AgentConfig =
+            serde_json::from_str(r#"{"channel_path":"channel","secret_file":"secret"}"#)
+                .expect("parse minimal config");
         assert!(!config.policy.password);
         assert!(!config.policy.hostname);
         assert!(!config.policy.dns);

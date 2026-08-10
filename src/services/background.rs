@@ -6,8 +6,8 @@ use std::{
     time::Duration,
 };
 
-use chrono::Utc;
 use base64::{engine::general_purpose::STANDARD, Engine as _};
+use chrono::Utc;
 use futures_util::{stream, StreamExt};
 use serde_json::{json, Value};
 use tokio::{io::AsyncWriteExt, process::Command, time::MissedTickBehavior};
@@ -20,8 +20,8 @@ use crate::{
         VmPowerState, VmStats,
     },
     models::{
-        GuestToolsPlatform, GuestToolsProvisioner, GuestToolsStatus, HostMetric, Job, NewAuditEvent,
-        NewJob, NewVm, VmMetric, VmPatch, VmState, STAGED_GUEST_TOOLS_GENERATION_FIELD,
+        GuestToolsPlatform, GuestToolsProvisioner, GuestToolsStatus, HostMetric, Job, NewAuditEvent, NewJob,
+        NewVm, VmMetric, VmPatch, VmState, STAGED_GUEST_TOOLS_GENERATION_FIELD,
         STAGED_PASSWORD_ENVELOPE_FIELD,
     },
     security::vm_password_context,
@@ -77,16 +77,17 @@ async fn guest_tools_health_loop(state: Arc<AppState>) {
                 for vm in vms.into_iter().filter(|vm| vm.state == VmState::Running) {
                     match state.db.vm_guest_tools(&vm.id) {
                         Ok(Some(record)) if record.enabled => {
-                            match state
-                                .db
-                                .installed_vm_guest_tools_rotation_generation(&vm.id)
-                            {
+                            match state.db.installed_vm_guest_tools_rotation_generation(&vm.id) {
                                 Ok(generation) => candidates.push((vm, generation)),
-                                Err(error) => warn!(vm_id = %vm.id, error = %error, "could not inspect Guest Tools rotation for health sweep"),
+                                Err(error) => {
+                                    warn!(vm_id = %vm.id, error = %error, "could not inspect Guest Tools rotation for health sweep")
+                                }
                             }
                         }
                         Ok(_) => {}
-                        Err(error) => warn!(vm_id = %vm.id, error = %error, "could not inspect Guest Tools state for health sweep"),
+                        Err(error) => {
+                            warn!(vm_id = %vm.id, error = %error, "could not inspect Guest Tools state for health sweep")
+                        }
                     }
                 }
                 candidates
@@ -104,12 +105,7 @@ async fn guest_tools_health_loop(state: Arc<AppState>) {
                     // pending rotation. Besides health, this recovers seed
                     // retirement after a worker crash or externally triggered
                     // autostart; a plain probe has no media-lifecycle step.
-                    match crate::services::guest_tools::bootstrap(
-                        &state,
-                        &vm,
-                        generation.as_deref(),
-                    )
-                    .await {
+                    match crate::services::guest_tools::bootstrap(&state, &vm, generation.as_deref()).await {
                         Ok(result) if result.promoted_rotation => {
                             let _ = state.db.append_audit(&NewAuditEvent {
                                 actor_type: "system".into(),
@@ -146,10 +142,7 @@ async fn update_status_audit_loop(state: Arc<AppState>) {
     loop {
         match crate::services::updater::read_durable_update_statuses() {
             Ok(statuses) => {
-                for status in statuses
-                    .into_iter()
-                    .filter(|status| status.outcome.is_terminal())
-                {
+                for status in statuses.into_iter().filter(|status| status.outcome.is_terminal()) {
                     let request_id = status.request_id.clone();
                     let action = match status.operation.as_deref() {
                         Some("activate" | "recover") => "update.activate",
@@ -197,11 +190,8 @@ async fn network_security_loop(state: Arc<AppState>) {
         if let Err(error) = crate::services::firewall::reconcile(&state).await {
             warn!(error = %error, "network security policy reconciliation failed");
             if let Err(containment_error) =
-                crate::services::firewall::fail_closed_after_reconcile_failure(
-                    &state,
-                    &error.to_string(),
-                )
-                .await
+                crate::services::firewall::fail_closed_after_reconcile_failure(&state, &error.to_string())
+                    .await
             {
                 error!(
                     error = %containment_error,
@@ -564,11 +554,7 @@ fn delta_rate(current: u64, previous: u64, elapsed: f64) -> f64 {
     current.saturating_sub(previous) as f64 / elapsed
 }
 
-fn accounted_traffic_delta(
-    prior: &PreviousVmSample,
-    current: &VmStats,
-    traffic_generation: u64,
-) -> u64 {
+fn accounted_traffic_delta(prior: &PreviousVmSample, current: &VmStats, traffic_generation: u64) -> u64 {
     if prior.sampled_at == 0 || prior.traffic_generation != traffic_generation {
         return 0;
     }
@@ -639,11 +625,7 @@ async fn execute_claimed_job(state: &AppState, job: Job) {
         }
         Err(error) => {
             if job.kind == "vm.guest_tools.bootstrap" {
-                let deadline = job
-                    .payload
-                    .get("deadline")
-                    .and_then(Value::as_i64)
-                    .unwrap_or(now);
+                let deadline = job.payload.get("deadline").and_then(Value::as_i64).unwrap_or(now);
                 if now < deadline && job.attempts < job.max_attempts {
                     if let Some(vm_id) = job.vm_id.as_deref() {
                         let _ = state.db.update_vm_guest_tools_status(
@@ -720,10 +702,7 @@ async fn execute_claimed_job(state: &AppState, job: Job) {
                 && job.attempts < job.max_attempts
                 && delete_error_is_retryable(&error))
             .then(|| now.saturating_add(5 * i64::from(job.attempts.max(1))));
-            let retry_scheduled = match state
-                .db
-                .fail_job(&job.id, &error.to_string(), retry_at, now)
-            {
+            let retry_scheduled = match state.db.fail_job(&job.id, &error.to_string(), retry_at, now) {
                 Ok(updated) => updated.status == crate::models::JobStatus::Queued,
                 Err(record_error) => {
                     error!(job_id = %job.id, error = %record_error, "could not record failed job attempt");
@@ -777,14 +756,8 @@ async fn execute_job(state: &AppState, job: &Job) -> AppResult<Value> {
             crate::services::routed_network::reconcile_vm(state, &routed_vm).await?;
             if request.image.is_unattended_windows() {
                 request.cloud_init_iso = Some(
-                    build_windows_unattend_seed(
-                        state,
-                        required_vm(state, job)?,
-                        None,
-                        &request.image,
-                        None,
-                    )
-                    .await?,
+                    build_windows_unattend_seed(state, required_vm(state, job)?, None, &request.image, None)
+                        .await?,
                 );
             } else if should_build_cloud_init(state, &request.image).await? {
                 request.cloud_init_iso =
@@ -797,10 +770,7 @@ async fn execute_job(state: &AppState, job: &Job) -> AppResult<Value> {
             if start_after_provisioning {
                 info = state.hypervisor.power(&vm.name, PowerAction::Start).await?;
                 if unattended_windows {
-                    state
-                        .hypervisor
-                        .acknowledge_install_media_boot(&vm.name)
-                        .await?;
+                    state.hypervisor.acknowledge_install_media_boot(&vm.name).await?;
                 }
                 sync_vm_info(state, Some(&vm.id), &info)?;
             }
@@ -841,8 +811,7 @@ async fn execute_job(state: &AppState, job: &Job) -> AppResult<Value> {
                     .pointer("/disk_protection/deletion_lock")
                     .and_then(Value::as_bool)
                     == Some(true)
-            })
-            {
+            }) {
                 return Err(AppError::Conflict(
                     "VM deletion is blocked by its disk-protection lock".into(),
                 ));
@@ -866,11 +835,7 @@ async fn execute_job(state: &AppState, job: &Job) -> AppResult<Value> {
                     .clone()
             };
             let seed_guard = seed_lock.lock().await;
-            match state
-                .hypervisor
-                .delete_vm(&target_vm_name, delete_storage)
-                .await
-            {
+            match state.hypervisor.delete_vm(&target_vm_name, delete_storage).await {
                 Ok(()) | Err(HypervisorError::NotFound(_)) => {}
                 Err(error) => return Err(error.into()),
             }
@@ -885,9 +850,7 @@ async fn execute_job(state: &AppState, job: &Job) -> AppResult<Value> {
             // the libvirt domain has already disappeared.
             remove_vm_provisioning_seed(&state.config.cloud_init_storage, &target_vm_id).await?;
             state.db.update_job_progress(&job.id, 75.0)?;
-            if let Ok(path) =
-                crate::services::guest_tools::socket_path(&state.config, &target_vm_id)
-            {
+            if let Ok(path) = crate::services::guest_tools::socket_path(&state.config, &target_vm_id) {
                 let _ = tokio::fs::remove_file(path).await;
             }
             let already_absent = vm.is_none();
@@ -919,10 +882,7 @@ async fn execute_job(state: &AppState, job: &Job) -> AppResult<Value> {
             }
             let info = state.hypervisor.power(&vm.name, action).await?;
             if action == PowerAction::Start && windows_install_seed_is_present(state, &vm).await {
-                state
-                    .hypervisor
-                    .acknowledge_install_media_boot(&vm.name)
-                    .await?;
+                state.hypervisor.acknowledge_install_media_boot(&vm.name).await?;
             }
             sync_vm_info(state, Some(&vm.id), &info)?;
             crate::services::traffic::reconcile_vm(state, &vm.id, true).await?;
@@ -930,9 +890,7 @@ async fn execute_job(state: &AppState, job: &Job) -> AppResult<Value> {
                 action,
                 PowerAction::Start | PowerAction::Reboot | PowerAction::Reset | PowerAction::Resume
             ) {
-                let generation = state
-                    .db
-                    .installed_vm_guest_tools_rotation_generation(&vm.id)?;
+                let generation = state.db.installed_vm_guest_tools_rotation_generation(&vm.id)?;
                 enqueue_guest_tools_bootstrap(state, job, &vm, generation)?
             } else {
                 None
@@ -1093,9 +1051,7 @@ async fn execute_job(state: &AppState, job: &Job) -> AppResult<Value> {
             // post-step error; terminal cleanup removes the private envelope
             // from the job but this committed VM credential intentionally
             // remains authoritative.
-            state
-                .db
-                .commit_reinstall_password_after_hypervisor(&job.id)?;
+            state.db.commit_reinstall_password_after_hypervisor(&job.id)?;
             if replacement_iso_id.is_some()
                 || replacement_os_family.is_some()
                 || replacement_root_username.is_some()
@@ -1139,12 +1095,7 @@ async fn execute_job(state: &AppState, job: &Job) -> AppResult<Value> {
             }
             crate::services::traffic::reconcile_vm(state, &vm.id, true).await?;
             let guest_tools_bootstrap = if start_after_provisioning {
-                enqueue_guest_tools_bootstrap(
-                    state,
-                    job,
-                    &refreshed,
-                    guest_tools_generation,
-                )?
+                enqueue_guest_tools_bootstrap(state, job, &refreshed, guest_tools_generation)?
             } else {
                 None
             };
@@ -1157,12 +1108,8 @@ async fn execute_job(state: &AppState, job: &Job) -> AppResult<Value> {
                     "VM is not running yet; Guest Tools bootstrap will retry".into(),
                 ));
             }
-            let expected_generation = job
-                .payload
-                .get("expected_generation")
-                .and_then(Value::as_str);
-            let result =
-                crate::services::guest_tools::bootstrap(state, &vm, expected_generation).await?;
+            let expected_generation = job.payload.get("expected_generation").and_then(Value::as_str);
+            let result = crate::services::guest_tools::bootstrap(state, &vm, expected_generation).await?;
             Ok(json!({ "guest_tools": result }))
         }
         "vm.snapshot.create" => {
@@ -1221,11 +1168,7 @@ fn enqueue_guest_tools_bootstrap(
         // Linux/RouterOS first-boot window before the signed serial driver and
         // native service are online. Keep the durable probe retryable for 30
         // minutes without extending the faster appliance path.
-        max_attempts: if windows_guest {
-            361
-        } else {
-            121
-        },
+        max_attempts: if windows_guest { 361 } else { 121 },
         actor_type: parent_job.actor_type.clone(),
         actor_id: parent_job.actor_id.clone(),
     })?;
@@ -1233,21 +1176,14 @@ fn enqueue_guest_tools_bootstrap(
         .as_ref()
         .is_some_and(|record| record.status != GuestToolsStatus::Ready || rotation_pending)
     {
-        let _ = state.db.update_vm_guest_tools_status(
-            &vm.id,
-            GuestToolsStatus::Pending,
-            None,
-            None,
-            false,
-        );
+        let _ = state
+            .db
+            .update_vm_guest_tools_status(&vm.id, GuestToolsStatus::Pending, None, None, false);
     }
     Ok(Some(bootstrap))
 }
 
-async fn windows_install_seed_is_present(
-    state: &AppState,
-    vm: &crate::models::Vm,
-) -> bool {
+async fn windows_install_seed_is_present(state: &AppState, vm: &crate::models::Vm) -> bool {
     if !is_windows_os_family(&vm.os_family) {
         return false;
     }
@@ -1273,19 +1209,14 @@ struct GuestToolsSeed {
     secret: String,
 }
 
-async fn load_guest_tools_seed(
-    state: &AppState,
-    vm_id: &str,
-) -> AppResult<Option<GuestToolsSeed>> {
+async fn load_guest_tools_seed(state: &AppState, vm_id: &str) -> AppResult<Option<GuestToolsSeed>> {
     let Some(record) = state.db.vm_guest_tools(vm_id)? else {
         return Ok(None);
     };
     if !record.enabled {
         return Ok(None);
     }
-    let pending = state
-        .db
-        .pending_vm_guest_tools_seed(vm_id, &state.security)?;
+    let pending = state.db.pending_vm_guest_tools_seed(vm_id, &state.security)?;
     let (platform, provisioner, secret) = if let Some(pending) = pending {
         (pending.platform, pending.provisioner, pending.secret)
     } else {
@@ -1295,10 +1226,7 @@ async fn load_guest_tools_seed(
             .ok_or_else(|| AppError::Conflict("VM Guest Tools channel secret is unavailable".into()))?;
         (record.platform, record.provisioner, secret)
     };
-    let artifact_path = crate::services::guest_tools::artifact_for_platform(
-        &state.config,
-        platform,
-    )?;
+    let artifact_path = crate::services::guest_tools::artifact_for_platform(&state.config, platform)?;
     let artifact = tokio::fs::read(&artifact_path).await.map_err(|error| {
         AppError::Conflict(format!(
             "could not read the configured {} Guest Tools artifact: {error}",
@@ -1360,14 +1288,7 @@ async fn build_cloud_init_seed(
                 "Windows Guest Tools requires the Cloudbase-Init NoCloud provisioner".into(),
             ));
         }
-        return build_cloudbase_seed(
-            state,
-            vm,
-            &password,
-            guest_tools,
-            guest_tools_generation,
-        )
-        .await;
+        return build_cloudbase_seed(state, vm, &password, guest_tools, guest_tools_generation).await;
     }
     let password_hash = cloud_init_password_hash(&password).await?;
     let addresses = state.db.vm_ip_addresses(&vm.id)?;
@@ -1480,6 +1401,7 @@ async fn build_cloud_init_seed(
                 "password": true,
                 "hostname": true,
                 "dns": true,
+                "network": true,
                 "ssh_keys": true,
                 "power": true,
                 "allowed_users": [vm.root_username.clone()],
@@ -1546,10 +1468,7 @@ async fn build_cloud_init_seed(
         .map(|address| format!("{}/{}", address.address, address.prefix_length))
         .collect::<Vec<_>>();
     if let Some(routed) = routed.as_ref() {
-        configured_addresses.push(format!(
-            "{}/{}",
-            routed.guest_address, routed.prefix_length
-        ));
+        configured_addresses.push(format!("{}/{}", routed.guest_address, routed.prefix_length));
     }
     let routes = if let Some(routed) = routed.as_ref() {
         std::collections::BTreeSet::from([routed.gateway.to_string()])
@@ -1652,13 +1571,7 @@ async fn build_windows_unattend_seed(
             "unattended Windows Guest Tools requires the Windows seed provisioner".into(),
         ));
     }
-    let script = windows_first_boot_script(
-        &vm,
-        &addresses,
-        &dns,
-        routed.as_ref(),
-        guest_tools.is_some(),
-    )?;
+    let script = windows_first_boot_script(&vm, &addresses, &dns, routed.as_ref(), guest_tools.is_some())?;
     let answer = windows_unattend_xml(
         &vm,
         &password,
@@ -1747,7 +1660,8 @@ fn windows_first_logon_command() -> &'static str {
 
 fn windows_disk_layout(uefi: bool) -> (&'static str, u8) {
     if uefi {
-        (r#"<CreatePartitions>
+        (
+            r#"<CreatePartitions>
             <CreatePartition wcm:action="add"><Order>1</Order><Type>EFI</Type><Size>100</Size></CreatePartition>
             <CreatePartition wcm:action="add"><Order>2</Order><Type>MSR</Type><Size>16</Size></CreatePartition>
             <CreatePartition wcm:action="add"><Order>3</Order><Type>Primary</Type><Extend>true</Extend></CreatePartition>
@@ -1757,15 +1671,18 @@ fn windows_disk_layout(uefi: bool) -> (&'static str, u8) {
             <ModifyPartition wcm:action="add"><Order>2</Order><PartitionID>2</PartitionID></ModifyPartition>
             <ModifyPartition wcm:action="add"><Order>3</Order><PartitionID>3</PartitionID><Format>NTFS</Format><Label>Windows</Label><Letter>C</Letter></ModifyPartition>
           </ModifyPartitions>"#,
-        3)
+            3,
+        )
     } else {
-        (r#"<CreatePartitions>
+        (
+            r#"<CreatePartitions>
             <CreatePartition wcm:action="add"><Order>1</Order><Type>Primary</Type><Extend>true</Extend></CreatePartition>
           </CreatePartitions>
           <ModifyPartitions>
             <ModifyPartition wcm:action="add"><Order>1</Order><PartitionID>1</PartitionID><Active>true</Active><Format>NTFS</Format><Label>Windows</Label><Letter>C</Letter></ModifyPartition>
           </ModifyPartitions>"#,
-        1)
+            1,
+        )
     }
 }
 
@@ -1854,7 +1771,8 @@ fn windows_first_boot_script(
         {
             script.push_str(&format!(
                 "New-NetIPAddress -InterfaceIndex $adapter.ifIndex -IPAddress '{}' -PrefixLength {}\n",
-                ps_literal(&address.address)?, address.prefix_length
+                ps_literal(&address.address)?,
+                address.prefix_length
             ));
         }
         script.push_str(&format!(
@@ -1905,7 +1823,10 @@ fn windows_first_boot_script(
 }
 
 fn ps_literal(value: &str) -> AppResult<String> {
-    if value.chars().any(|character| matches!(character, '\r' | '\n' | '\0')) {
+    if value
+        .chars()
+        .any(|character| matches!(character, '\r' | '\n' | '\0'))
+    {
         return Err(AppError::Validation(
             "Windows provisioning value contains a control character".into(),
         ));
@@ -1967,9 +1888,7 @@ async fn write_unattend_iso(
             .arg(driver_iso);
         for family in ["viostor", "NetKVM", "vioserial"] {
             for extension in ["inf", "sys", "cat", "dll", "exe"] {
-                extract.arg(format!(
-                    "{family}/{driver_version}/amd64/*.{extension}"
-                ));
+                extract.arg(format!("{family}/{driver_version}/amd64/*.{extension}"));
             }
         }
         extract
@@ -2005,11 +1924,7 @@ async fn write_unattend_iso(
 
         let tools_root = content.join("VexaTools");
         tokio::fs::create_dir(&tools_root).await?;
-        write_private_file(
-            &tools_root.join("FirstBoot.ps1"),
-            first_boot_script.as_bytes(),
-        )
-        .await?;
+        write_private_file(&tools_root.join("FirstBoot.ps1"), first_boot_script.as_bytes()).await?;
         if let Some(tools) = guest_tools.as_ref() {
             write_private_file(&tools_root.join("vexa-guest-tools.exe"), &tools.artifact).await?;
             write_private_file(
@@ -2078,12 +1993,7 @@ fn is_windows_os_family(value: &str) -> bool {
     value.to_ascii_lowercase().contains("windows")
 }
 
-fn append_cloud_init_base64_file(
-    user_data: &mut String,
-    path: &str,
-    permissions: &str,
-    contents: &[u8],
-) {
+fn append_cloud_init_base64_file(user_data: &mut String, path: &str, permissions: &str, contents: &[u8]) {
     user_data.push_str(&format!(
         "  - path: {path}\n    owner: root:root\n    permissions: '{permissions}'\n    encoding: b64\n    content: {}\n",
         STANDARD.encode(contents)
@@ -2136,9 +2046,7 @@ fn networkmanager_routed_keyfile(
     if !dns.is_empty() {
         profile.push_str(&format!("dns={};\n", dns.join(";")));
     }
-    profile.push_str(
-        "never-default=false\nmay-fail=false\n\n[ipv6]\nmethod=auto\nmay-fail=true\n",
-    );
+    profile.push_str("never-default=false\nmay-fail=false\n\n[ipv6]\nmethod=auto\nmay-fail=true\n");
     Ok(profile)
 }
 
@@ -2212,7 +2120,7 @@ try {{
         if !ssh_keys.is_empty() {
             let encoded_keys = STANDARD.encode(ssh_keys.join("\r\n").as_bytes());
             user_data.push_str(&format!(
-            r#"$keyDirectory = Join-Path $env:ProgramData 'Vexa\GuestTools\authorized_keys'
+                r#"$keyDirectory = Join-Path $env:ProgramData 'Vexa\GuestTools\authorized_keys'
 New-Item -ItemType Directory -Force -Path $keyDirectory | Out-Null
 $keyPath = Join-Path $keyDirectory $username
 [IO.File]::WriteAllText($keyPath, (Decode-Text '{encoded_keys}') + "`r`n")
@@ -2257,11 +2165,8 @@ if ($LASTEXITCODE -ne 0) {{ throw 'Failed to protect the Vexa-managed SSH key fi
     } else {
         let mut gateway_families = std::collections::BTreeSet::new();
         for address in &addresses {
-            let (subnet_type, configured_address, netmask) = cloudbase_static_subnet(
-                address.family,
-                &address.address,
-                address.prefix_length,
-            )?;
+            let (subnet_type, configured_address, netmask) =
+                cloudbase_static_subnet(address.family, &address.address, address.prefix_length)?;
             network.push_str(&format!(
                 "      - type: {subnet_type}\n        address: {}\n",
                 quoted(&configured_address)?,
@@ -2331,9 +2236,9 @@ fn cloudbase_static_subnet(
 ) -> AppResult<(&'static str, String, Option<String>)> {
     match family {
         crate::models::AddressFamily::V4 => {
-            let address = address.parse::<std::net::Ipv4Addr>().map_err(|_| {
-                AppError::Validation("Cloudbase-Init IPv4 address is invalid".into())
-            })?;
+            let address = address
+                .parse::<std::net::Ipv4Addr>()
+                .map_err(|_| AppError::Validation("Cloudbase-Init IPv4 address is invalid".into()))?;
             if prefix_length > 32 {
                 return Err(AppError::Validation(
                     "Cloudbase-Init IPv4 prefix must be between 0 and 32".into(),
@@ -2351,19 +2256,15 @@ fn cloudbase_static_subnet(
             ))
         }
         crate::models::AddressFamily::V6 => {
-            let address = address.parse::<std::net::Ipv6Addr>().map_err(|_| {
-                AppError::Validation("Cloudbase-Init IPv6 address is invalid".into())
-            })?;
+            let address = address
+                .parse::<std::net::Ipv6Addr>()
+                .map_err(|_| AppError::Validation("Cloudbase-Init IPv6 address is invalid".into()))?;
             if prefix_length > 128 {
                 return Err(AppError::Validation(
                     "Cloudbase-Init IPv6 prefix must be between 0 and 128".into(),
                 ));
             }
-            Ok((
-                "static6",
-                format!("{address}/{prefix_length}"),
-                None,
-            ))
+            Ok(("static6", format!("{address}/{prefix_length}"), None))
         }
     }
 }
@@ -2388,9 +2289,7 @@ async fn write_seed_iso(
         let program = ["/usr/bin/genisoimage", "/usr/bin/mkisofs"]
             .into_iter()
             .find(|candidate| Path::new(candidate).is_file())
-            .ok_or_else(|| {
-                AppError::Hypervisor("genisoimage is required for cloud-init images".into())
-            })?;
+            .ok_or_else(|| AppError::Hypervisor("genisoimage is required for cloud-init images".into()))?;
         let output_path = temporary.join("seed.iso");
         let mut command = Command::new(program);
         command
@@ -2517,11 +2416,9 @@ async fn sync_directory(path: &Path) -> AppResult<()> {
     #[cfg(unix)]
     {
         let path = path.to_owned();
-        tokio::task::spawn_blocking(move || -> std::io::Result<()> {
-            std::fs::File::open(path)?.sync_all()
-        })
-        .await
-        .map_err(|error| AppError::Internal(format!("directory sync task failed: {error}")))??;
+        tokio::task::spawn_blocking(move || -> std::io::Result<()> { std::fs::File::open(path)?.sync_all() })
+            .await
+            .map_err(|error| AppError::Internal(format!("directory sync task failed: {error}")))??;
     }
     #[cfg(not(unix))]
     let _ = path;
@@ -2558,10 +2455,7 @@ async fn remove_vm_provisioning_seed(root: &Path, vm_id: &str) -> AppResult<bool
 fn delete_error_is_retryable(error: &AppError) -> bool {
     matches!(
         error,
-        AppError::Database(_)
-            | AppError::Hypervisor(_)
-            | AppError::Io(_)
-            | AppError::Internal(_)
+        AppError::Database(_) | AppError::Hypervisor(_) | AppError::Io(_) | AppError::Internal(_)
     )
 }
 
@@ -2574,10 +2468,7 @@ fn payload_field<T: serde::de::DeserializeOwned>(payload: &Value, field: &str) -
 /// policy before a guest becomes network-active. If reconciliation fails, stop
 /// an already-active guest so protection fails closed instead of becoming only
 /// a panel badge with unfiltered traffic underneath it.
-async fn ensure_vm_network_policy(
-    state: &AppState,
-    vm: &crate::models::Vm,
-) -> AppResult<()> {
+async fn ensure_vm_network_policy(state: &AppState, vm: &crate::models::Vm) -> AppResult<()> {
     if state.hypervisor.capabilities().await?.backend != "libvirt" {
         return Ok(());
     }
@@ -2671,33 +2562,28 @@ async fn maintenance_loop(state: Arc<AppState>) {
 #[cfg(test)]
 mod cloudbase_network_tests {
     use super::{
-        accounted_traffic_delta, cloudbase_static_subnet, is_windows_os_family,
-        remove_vm_provisioning_seed, windows_computer_name, windows_disk_layout,
-        windows_first_logon_command, PreviousVmSample,
+        accounted_traffic_delta, cloudbase_static_subnet, is_windows_os_family, remove_vm_provisioning_seed,
+        windows_computer_name, windows_disk_layout, windows_first_logon_command, PreviousVmSample,
     };
     use crate::hypervisor::VmStats;
     use crate::models::AddressFamily;
 
     #[test]
     fn cloudbase_ipv4_uses_a_dotted_network_mask() {
-        let (kind, address, mask) =
-            cloudbase_static_subnet(AddressFamily::V4, "192.0.2.83", 24).unwrap();
+        let (kind, address, mask) = cloudbase_static_subnet(AddressFamily::V4, "192.0.2.83", 24).unwrap();
         assert_eq!(kind, "static");
         assert_eq!(address, "192.0.2.83");
         assert_eq!(mask.as_deref(), Some("255.255.255.0"));
 
-        let (_, _, host_mask) =
-            cloudbase_static_subnet(AddressFamily::V4, "198.51.100.7", 32).unwrap();
+        let (_, _, host_mask) = cloudbase_static_subnet(AddressFamily::V4, "198.51.100.7", 32).unwrap();
         assert_eq!(host_mask.as_deref(), Some("255.255.255.255"));
-        let (_, _, default_mask) =
-            cloudbase_static_subnet(AddressFamily::V4, "0.0.0.0", 0).unwrap();
+        let (_, _, default_mask) = cloudbase_static_subnet(AddressFamily::V4, "0.0.0.0", 0).unwrap();
         assert_eq!(default_mask.as_deref(), Some("0.0.0.0"));
     }
 
     #[test]
     fn cloudbase_ipv6_uses_static6_and_cidr_addressing() {
-        let (kind, address, mask) =
-            cloudbase_static_subnet(AddressFamily::V6, "2001:db8::83", 64).unwrap();
+        let (kind, address, mask) = cloudbase_static_subnet(AddressFamily::V6, "2001:db8::83", 64).unwrap();
         assert_eq!(kind, "static6");
         assert_eq!(address, "2001:db8::83/64");
         assert!(mask.is_none());
@@ -2786,15 +2672,11 @@ mod cloudbase_network_tests {
         let seed = root.join("vm-one.iso");
         std::fs::write(&seed, b"credential-bearing seed").unwrap();
 
-        assert!(remove_vm_provisioning_seed(&root, "vm-one")
-            .await
-            .unwrap());
+        assert!(remove_vm_provisioning_seed(&root, "vm-one").await.unwrap());
         assert!(!seed.exists());
         // A worker retry after unlink (including one following a failed sync)
         // accepts NotFound and re-syncs the extant managed directory.
-        assert!(!remove_vm_provisioning_seed(&root, "vm-one")
-            .await
-            .unwrap());
+        assert!(!remove_vm_provisioning_seed(&root, "vm-one").await.unwrap());
     }
 
     #[tokio::test]

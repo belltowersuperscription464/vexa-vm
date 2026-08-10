@@ -90,6 +90,7 @@ $configuration = @{
         password = $true
         hostname = $true
         dns = $true
+        network = $true
         ssh_keys = $true
         power = $true
         allowed_users = @()

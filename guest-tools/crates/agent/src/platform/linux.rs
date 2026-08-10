@@ -8,7 +8,7 @@ use std::{
 };
 
 use anyhow::{bail, Context, Result};
-use vexa_guest_protocol::{Command, ResponseData};
+use vexa_guest_protocol::{Command, NetworkAddress, ResponseData};
 
 use super::{require_user, run_command, ActionOutcome, DeferredAction, Platform};
 use crate::config::Policy;
@@ -36,11 +36,11 @@ impl NativePlatform {
         if policy.hostname && utility_available("hostnamectl") {
             capabilities.push("hostname".into());
         }
-        if policy.dns
-            && utility_available("systemctl")
-            && utility_available("resolvectl")
-        {
+        if policy.dns && utility_available("systemctl") && utility_available("resolvectl") {
             capabilities.push("dns".into());
+        }
+        if policy.network && utility_available("netplan") {
+            capabilities.push("network".into());
         }
         if policy.ssh_keys
             && ["getent", "runuser", "mkdir", "dd", "chmod", "mv"]
@@ -86,10 +86,7 @@ impl NativePlatform {
         let contents = format!(
             "# Managed by Vexa Guest Tools. Manual changes may be replaced.\n[Resolve]\nDNS={addresses}\n"
         );
-        atomic_write_root_owned(
-            &directory.join("90-vexa-guest-tools.conf"),
-            contents.as_bytes(),
-        )?;
+        atomic_write_root_owned(&directory.join("90-vexa-guest-tools.conf"), contents.as_bytes())?;
         run_command("systemctl", &["restart", "systemd-resolved.service"], None)?;
 
         if let Some(interface) = interface {
@@ -97,6 +94,39 @@ impl NativePlatform {
             let rendered = servers.iter().map(ToString::to_string).collect::<Vec<_>>();
             arguments.extend(rendered.iter().map(String::as_str));
             run_command("resolvectl", &arguments, None)?;
+        }
+        Ok(())
+    }
+
+    fn set_network(
+        &self,
+        interface: Option<&str>,
+        addresses: &[NetworkAddress],
+        gateways: &[IpAddr],
+        dns_servers: &[IpAddr],
+    ) -> Result<()> {
+        let interface = interface
+            .map(str::to_owned)
+            .or_else(default_route_interface)
+            .context("could not identify the guest's default network interface")?;
+        validate_linux_interface(&interface)?;
+        let path = Path::new("/etc/netplan/90-vexa-guest-tools.yaml");
+        let previous = match fs::read(path) {
+            Ok(contents) => Some(contents),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+            Err(error) => return Err(error).context("failed to read managed netplan configuration"),
+        };
+        let configuration = render_netplan(&interface, addresses, gateways, dns_servers);
+        atomic_write_root_owned(path, configuration.as_bytes())?;
+        if let Err(error) =
+            run_command("netplan", &["generate"], None).and_then(|_| run_command("netplan", &["apply"], None))
+        {
+            restore_managed_netplan(path, previous.as_deref());
+            let _ = run_command("netplan", &["generate"], None);
+            let _ = run_command("netplan", &["apply"], None);
+            return Err(error).context(
+                "failed to apply managed netplan configuration; the previous configuration was restored",
+            );
         }
         Ok(())
     }
@@ -158,6 +188,16 @@ impl Platform for NativePlatform {
                 self.set_dns(interface.as_deref(), servers)?;
                 Ok(changed("DNS servers changed", false))
             }
+            Command::SetNetwork {
+                interface,
+                addresses,
+                gateways,
+                dns_servers,
+            } => {
+                require_enabled(policy.network, "network changes")?;
+                self.set_network(interface.as_deref(), addresses, gateways, dns_servers)?;
+                Ok(changed("network addresses and routes changed", false))
+            }
             Command::SetSshKeys {
                 username,
                 authorized_keys,
@@ -182,6 +222,72 @@ impl Platform for NativePlatform {
         match action {
             DeferredAction::Shutdown => run_command("systemctl", &["poweroff", "--no-block"], None),
             DeferredAction::Reboot => run_command("systemctl", &["reboot", "--no-block"], None),
+        }
+    }
+}
+
+fn validate_linux_interface(interface: &str) -> Result<()> {
+    if interface.is_empty()
+        || interface.len() > 15
+        || !interface
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.'))
+    {
+        bail!("network interface name is not safe for netplan");
+    }
+    Ok(())
+}
+
+fn default_route_interface() -> Option<String> {
+    let routes = fs::read_to_string("/proc/net/route").ok()?;
+    routes.lines().skip(1).find_map(|line| {
+        let fields = line.split_whitespace().collect::<Vec<_>>();
+        (fields.len() >= 4 && fields[1] == "00000000").then(|| fields[0].to_owned())
+    })
+}
+
+fn render_netplan(
+    interface: &str,
+    addresses: &[NetworkAddress],
+    gateways: &[IpAddr],
+    dns_servers: &[IpAddr],
+) -> String {
+    let mut output = format!(
+        "# Managed by Vexa Guest Tools. Manual changes may be replaced.\nnetwork:\n  version: 2\n  ethernets:\n    {interface}:\n      dhcp4: false\n      dhcp6: false\n"
+    );
+    if addresses.is_empty() {
+        output.push_str("      addresses: []\n");
+    } else {
+        output.push_str("      addresses:\n");
+        for item in addresses {
+            output.push_str(&format!("        - {}/{}\n", item.address, item.prefix_length));
+        }
+    }
+    if !gateways.is_empty() {
+        output.push_str("      routes:\n");
+        for gateway in gateways {
+            let destination = if gateway.is_ipv4() { "0.0.0.0/0" } else { "::/0" };
+            output.push_str(&format!(
+                "        - to: {destination}\n          via: {gateway}\n          on-link: true\n"
+            ));
+        }
+    }
+    if !dns_servers.is_empty() {
+        output.push_str("      nameservers:\n        addresses:\n");
+        for server in dns_servers {
+            output.push_str(&format!("          - {server}\n"));
+        }
+    }
+    output
+}
+
+fn restore_managed_netplan(path: &Path, previous: Option<&[u8]>) {
+    match previous {
+        Some(contents) => {
+            let _ = atomic_write_root_owned(path, contents);
+        }
+        None => {
+            let _ = fs::remove_file(path);
         }
     }
 }
@@ -231,8 +337,8 @@ fn user_home(username: &str) -> Result<PathBuf> {
 }
 
 fn refuse_symlink(path: &Path) -> Result<()> {
-    let metadata = fs::symlink_metadata(path)
-        .with_context(|| format!("failed to inspect {}", path.display()))?;
+    let metadata =
+        fs::symlink_metadata(path).with_context(|| format!("failed to inspect {}", path.display()))?;
     if metadata.file_type().is_symlink() {
         bail!("refusing to write through a symbolic link");
     }
@@ -248,8 +354,7 @@ fn read_authorized_keys_nofollow(path: &Path) -> Result<String> {
         Ok(file) => file,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(String::new()),
         Err(error) => {
-            return Err(error)
-                .with_context(|| format!("failed to read existing {}", path.display()))
+            return Err(error).with_context(|| format!("failed to read existing {}", path.display()))
         }
     };
     let metadata = file
@@ -272,9 +377,7 @@ fn read_authorized_keys_nofollow(path: &Path) -> Result<String> {
 }
 
 fn atomic_write_as_user(username: &str, path: &Path, contents: &[u8]) -> Result<()> {
-    let parent = path
-        .parent()
-        .context("authorized_keys has no parent directory")?;
+    let parent = path.parent().context("authorized_keys has no parent directory")?;
     refuse_symlink(parent)?;
 
     let suffix = SystemTime::now()
@@ -288,9 +391,7 @@ fn atomic_write_as_user(username: &str, path: &Path, contents: &[u8]) -> Result<
     let temporary_path = temporary
         .to_str()
         .context("temporary authorized_keys path is not valid UTF-8")?;
-    let destination_path = path
-        .to_str()
-        .context("authorized_keys path is not valid UTF-8")?;
+    let destination_path = path.to_str().context("authorized_keys path is not valid UTF-8")?;
     let output_argument = format!("of={temporary_path}");
 
     let write_result = run_command(
@@ -310,15 +411,7 @@ fn atomic_write_as_user(username: &str, path: &Path, contents: &[u8]) -> Result<
     .and_then(|_| {
         run_command(
             "runuser",
-            &[
-                "-u",
-                username,
-                "--",
-                "chmod",
-                "600",
-                "--",
-                temporary_path,
-            ],
+            &["-u", username, "--", "chmod", "600", "--", temporary_path],
             None,
         )
     })
@@ -378,10 +471,17 @@ fn sync_regular_file_nofollow(path: &Path) -> Result<()> {
 }
 
 fn utility_available(name: &str) -> bool {
-    ["/usr/local/sbin", "/usr/local/bin", "/usr/sbin", "/usr/bin", "/sbin", "/bin"]
-        .iter()
-        .map(|directory| Path::new(directory).join(name))
-        .any(|path| path.is_file())
+    [
+        "/usr/local/sbin",
+        "/usr/local/bin",
+        "/usr/sbin",
+        "/usr/bin",
+        "/sbin",
+        "/bin",
+    ]
+    .iter()
+    .map(|directory| Path::new(directory).join(name))
+    .any(|path| path.is_file())
 }
 
 fn replace_managed_key_block(existing: &str, keys: &[String]) -> Result<String> {
@@ -460,7 +560,8 @@ mod tests {
 
     #[test]
     fn managed_keys_preserve_unmanaged_content() {
-        let original = "ssh-ed25519 AAAA old\n# BEGIN VEXA GUEST TOOLS\nssh-rsa AAAA stale\n# END VEXA GUEST TOOLS\n";
+        let original =
+            "ssh-ed25519 AAAA old\n# BEGIN VEXA GUEST TOOLS\nssh-rsa AAAA stale\n# END VEXA GUEST TOOLS\n";
         let result = replace_managed_key_block(
             original,
             &["ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIEexample".into()],
@@ -477,6 +578,7 @@ mod tests {
             password: false,
             hostname: false,
             dns: false,
+            network: false,
             ssh_keys: false,
             power: false,
             allowed_users: Vec::new(),
@@ -485,6 +587,34 @@ mod tests {
             panic!("expected health response");
         };
         assert!(capabilities.is_empty());
+    }
+
+    #[test]
+    fn managed_netplan_contains_every_address_and_gateway() {
+        let rendered = render_netplan(
+            "eth0",
+            &[
+                NetworkAddress {
+                    address: "169.254.40.2".parse().unwrap(),
+                    prefix_length: 30,
+                },
+                NetworkAddress {
+                    address: "203.0.113.10".parse().unwrap(),
+                    prefix_length: 32,
+                },
+                NetworkAddress {
+                    address: "2001:db8::10".parse().unwrap(),
+                    prefix_length: 128,
+                },
+            ],
+            &["169.254.40.1".parse().unwrap(), "2001:db8::1".parse().unwrap()],
+            &["1.1.1.1".parse().unwrap()],
+        );
+        assert!(rendered.contains("203.0.113.10/32"));
+        assert!(rendered.contains("2001:db8::10/128"));
+        assert!(rendered.contains("to: 0.0.0.0/0"));
+        assert!(rendered.contains("to: ::/0"));
+        assert!(rendered.contains("- 1.1.1.1"));
     }
 
     #[test]

@@ -3,7 +3,8 @@ use std::{fs, path::PathBuf};
 use anyhow::{bail, Context, Result};
 use base64::{engine::general_purpose::STANDARD, Engine as _};
 use serde::Serialize;
-use vexa_guest_protocol::{Command, ResponseData};
+use std::net::IpAddr;
+use vexa_guest_protocol::{Command, NetworkAddress, ResponseData};
 
 use super::{require_user, run_command, ActionOutcome, DeferredAction, Platform};
 use crate::config::Policy;
@@ -27,10 +28,10 @@ impl NativePlatform {
         if policy.dns && powershell_available {
             capabilities.push("dns".into());
         }
-        if policy.ssh_keys
-            && windows_utility("icacls.exe")
-            && vexa_authorized_keys_configured()
-        {
+        if policy.network && powershell_available {
+            capabilities.push("network".into());
+        }
+        if policy.ssh_keys && windows_utility("icacls.exe") && vexa_authorized_keys_configured() {
             capabilities.push("ssh_keys".into());
         }
         if policy.power && windows_utility("shutdown.exe") {
@@ -71,6 +72,53 @@ impl NativePlatform {
         run_powershell(SCRIPT, &[], Some(&payload))
     }
 
+    fn set_network(
+        &self,
+        interface: Option<&str>,
+        addresses: &[NetworkAddress],
+        gateways: &[IpAddr],
+        dns_servers: &[IpAddr],
+    ) -> Result<()> {
+        #[derive(Serialize)]
+        struct AddressPayload {
+            address: String,
+            prefix_length: u8,
+        }
+        #[derive(Serialize)]
+        struct NetworkPayload<'a> {
+            interface: Option<&'a str>,
+            addresses: Vec<AddressPayload>,
+            gateways: Vec<String>,
+            dns_servers: Vec<String>,
+        }
+        let payload = serde_json::to_vec(&NetworkPayload {
+            interface,
+            addresses: addresses
+                .iter()
+                .map(|item| AddressPayload {
+                    address: item.address.to_string(),
+                    prefix_length: item.prefix_length,
+                })
+                .collect(),
+            gateways: gateways.iter().map(ToString::to_string).collect(),
+            dns_servers: dns_servers.iter().map(ToString::to_string).collect(),
+        })?;
+        const SCRIPT: &str = r#"
+$p=$vexaInput|ConvertFrom-Json
+if($null-ne$p.interface){$a=Get-NetAdapter -InterfaceAlias $p.interface -ErrorAction Stop}else{$a=Get-NetAdapter|Where-Object Status -eq 'Up'|Sort-Object ifIndex|Select-Object -First 1}
+if($null-eq$a){throw 'No active network adapter was found.'}
+$i=$a.ifIndex
+Set-NetIPInterface -InterfaceIndex $i -AddressFamily IPv4 -Dhcp Disabled -ErrorAction Stop
+$wanted=@{};foreach($x in $p.addresses){$wanted[$x.address]=$x}
+Get-NetIPAddress -InterfaceIndex $i -ErrorAction Stop|Where-Object {$_.PrefixOrigin-ne'WellKnown'-and$_.IPAddress-notlike'169.254.*'-and$_.IPAddress-notlike'fe80:*'-and-not$wanted.ContainsKey($_.IPAddress)}|Remove-NetIPAddress -Confirm:$false -ErrorAction Stop
+foreach($x in $p.addresses){if(-not(Get-NetIPAddress -InterfaceIndex $i -IPAddress $x.address -ErrorAction SilentlyContinue)){New-NetIPAddress -InterfaceIndex $i -IPAddress $x.address -PrefixLength ([int]$x.prefix_length) -ErrorAction Stop|Out-Null}}
+Get-NetRoute -InterfaceIndex $i -DestinationPrefix @('0.0.0.0/0','::/0') -ErrorAction SilentlyContinue|Where-Object Protocol -ne 'Local'|Remove-NetRoute -Confirm:$false -ErrorAction Stop
+foreach($g in $p.gateways){$d=if($g.Contains(':')){'::/0'}else{'0.0.0.0/0'};New-NetRoute -InterfaceIndex $i -DestinationPrefix $d -NextHop $g -RouteMetric 10 -ErrorAction Stop|Out-Null}
+if($p.dns_servers.Count-gt 0){Set-DnsClientServerAddress -InterfaceIndex $i -ServerAddresses $p.dns_servers -ErrorAction Stop}
+"#;
+        run_powershell(SCRIPT, &[], Some(&payload))
+    }
+
     fn set_ssh_keys(&self, username: &str, keys: &[String]) -> Result<()> {
         let program_data = std::env::var_os("ProgramData")
             .map(PathBuf::from)
@@ -82,15 +130,12 @@ impl NativePlatform {
             bail!("Windows OpenSSH is not configured for Vexa-managed keys");
         }
         let data_directory = program_data.join(r"Vexa\GuestTools\authorized_keys");
-        fs::create_dir_all(&data_directory)
-            .context("failed to create the protected OpenSSH directory")?;
+        fs::create_dir_all(&data_directory).context("failed to create the protected OpenSSH directory")?;
         let key_file = data_directory.join(username);
         let existing = match fs::read_to_string(&key_file) {
             Ok(existing) => existing,
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => String::new(),
-            Err(error) => {
-                return Err(error).context("failed to read the existing authorized_keys file")
-            }
+            Err(error) => return Err(error).context("failed to read the existing authorized_keys file"),
         };
         let content = replace_managed_key_block(&existing, keys)?;
         fs::write(&key_file, content).context("failed to update authorized_keys")?;
@@ -132,6 +177,16 @@ impl Platform for NativePlatform {
                 require_enabled(policy.dns, "DNS changes")?;
                 self.set_dns(interface.as_deref(), servers)?;
                 Ok(changed("DNS servers changed", false))
+            }
+            Command::SetNetwork {
+                interface,
+                addresses,
+                gateways,
+                dns_servers,
+            } => {
+                require_enabled(policy.network, "network changes")?;
+                self.set_network(interface.as_deref(), addresses, gateways, dns_servers)?;
+                Ok(changed("network addresses and routes changed", false))
             }
             Command::SetSshKeys {
                 username,
@@ -188,11 +243,7 @@ fn run_powershell(script: &str, arguments: &[&str], stdin: Option<&[u8]>) -> Res
         command_script,
     ];
     command_arguments.extend_from_slice(arguments);
-    let result = run_command(
-        "powershell.exe",
-        &command_arguments,
-        encoded_input.as_deref(),
-    );
+    let result = run_command("powershell.exe", &command_arguments, encoded_input.as_deref());
     if let Some(input) = encoded_input.as_mut() {
         input.fill(0);
     }

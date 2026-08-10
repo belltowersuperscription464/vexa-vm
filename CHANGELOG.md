@@ -3,6 +3,21 @@
 All notable changes to Vexa-VM are documented here. The project follows Semantic Versioning after
 the first stable release.
 
+## 0.1.2 - 2026-08-11
+
+### Added
+
+- Authoritative live network reconciliation through Vexa Guest Tools for Linux netplan, Windows
+  networking, and RouterOS whenever VM addresses are assigned or released.
+- Automatic guest address, route, and DNS updates while preserving the same inventory for future
+  cloud-init and unattended reinstall provisioning.
+- Signed GitHub release delivery configuration for secure one-click updates from the Settings page.
+
+### Changed
+
+- VM address APIs now return the guest-application result and clearly report pending changes when
+  an older or disconnected guest agent must be upgraded or reinstalled.
+
 ## 0.1.1 - 2026-08-11
 
 ### Added

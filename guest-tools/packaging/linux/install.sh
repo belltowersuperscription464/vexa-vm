@@ -98,7 +98,7 @@ finish_installation() {
 }
 trap finish_installation EXIT
 
-CHANNEL_PATH="${channel_path}" python3 -c 'import json,os,sys; json.dump({"channel_path":os.environ["CHANNEL_PATH"],"secret_file":"/etc/vexa-guest-tools/secret","max_clock_skew_seconds":120,"replay_cache_capacity":4096,"reconnect_delay_seconds":2,"policy":{"password":True,"hostname":True,"dns":True,"ssh_keys":True,"power":True,"allowed_users":[]}},sys.stdout,separators=(",",":"))' > "${config_temp}"
+CHANNEL_PATH="${channel_path}" python3 -c 'import json,os,sys; json.dump({"channel_path":os.environ["CHANNEL_PATH"],"secret_file":"/etc/vexa-guest-tools/secret","max_clock_skew_seconds":120,"replay_cache_capacity":4096,"reconnect_delay_seconds":2,"policy":{"password":True,"hostname":True,"dns":True,"network":True,"ssh_keys":True,"power":True,"allowed_users":[]}},sys.stdout,separators=(",",":"))' > "${config_temp}"
 
 script_directory="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 published=true
