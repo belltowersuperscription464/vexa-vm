@@ -43,10 +43,10 @@
         <div class="mt-6 flex justify-end"><button class="btn-primary" type="submit">Save general defaults</button></div>
       </form>
 
-      <article class="panel hidden p-5 sm:p-7" data-settings-panel="virtualization">
+      <form class="panel hidden p-5 sm:p-7" data-settings-panel="virtualization" data-settings-form="general">
         <div class="flex items-start justify-between gap-4 border-b border-white/[.07] pb-5">
-          <div><h2 class="text-xl font-extralight text-white">Virtualization runtime</h2><p class="mt-1 text-sm text-slate-400">Read-only runtime details detected from this node.</p></div>
-          <span class="badge border-slate-300/20 text-slate-300">Environment-owned</span>
+          <div><h2 class="text-xl font-extralight text-white">Virtualization and overcommit</h2><p class="mt-1 text-sm text-slate-400">Control schedulable CPU and balloon-backed memory without changing VM API contracts.</p></div>
+          <span class="badge border-orbit-300/20 text-orbit-200">Live policy</span>
         </div>
         <div class="mt-6 grid gap-3 sm:grid-cols-2">
           <div class="rounded-xl border border-white/[.07] bg-white/[.025] p-4"><p class="label">Libvirt connection</p><code id="settings-runtime-libvirt" class="text-sm text-orbit-300">Loading…</code></div>
@@ -54,8 +54,13 @@
           <div class="rounded-xl border border-white/[.07] bg-white/[.025] p-4"><p class="label">Default bridge</p><code id="settings-runtime-bridge" class="text-sm text-orbit-300">Loading…</code></div>
           <div class="rounded-xl border border-white/[.07] bg-white/[.025] p-4"><p class="label">Console relay</p><code id="settings-runtime-console" class="text-sm text-orbit-300">Loading…</code></div>
         </div>
-        <p class="mt-5 text-sm leading-6 text-slate-500">These values are shown for troubleshooting only. Change host-owned runtime configuration in the service environment file, validate host access, then restart the service.</p>
-      </article>
+        <div class="mt-6 grid gap-5 sm:grid-cols-2">
+          <label><span class="label">CPU overcommit ratio</span><input name="cpu_overcommit_ratio" type="number" min="1" max="16" step="0.25" class="field" required><span class="mt-1.5 block text-xs leading-5 text-slate-600">Virtual CPUs are time-sliced by KVM. 4× is a balanced default for mixed workloads.</span></label>
+          <label><span class="label">Memory overcommit ratio</span><input name="memory_overcommit_ratio" type="number" min="1" max="4" step="0.1" class="field" required><span class="mt-1.5 block text-xs leading-5 text-slate-600">The VM retains its configured maximum while VirtIO ballooning sets a safe boot-time floor.</span></label>
+        </div>
+        <p class="mt-5 text-sm leading-6 text-amber-100/80">Memory overcommit requires a working VirtIO balloon driver in each guest. Disk capacity is never oversold, and Vexa keeps 256 MiB of host memory outside the guest pool.</p>
+        <div class="mt-6 flex justify-end"><button class="btn-primary" type="submit">Save capacity policy</button></div>
+      </form>
 
       <article class="panel hidden p-5 sm:p-7" data-settings-panel="storage">
         <div class="flex items-start justify-between gap-4 border-b border-white/[.07] pb-5">

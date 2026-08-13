@@ -138,12 +138,12 @@ jobs:
           sha256="$(sha256sum "${archive}" | awk '{print $1}')"
           size_bytes="$(stat -c '%s' "${archive}")"
           published_at="$(date -u +%s)"
-          asset_url="https://github.com/ItzGlace/vaxa-vm/releases/download/${GITHUB_REF_NAME}/$(basename "${archive}")"
+          asset_url="https://github.com/ItzGlace/vexa-vm/releases/download/${GITHUB_REF_NAME}/$(basename "${archive}")"
           manifest="dist/vexa-vm-update-manifest.json"
           envelope="dist/vexa-vm-update-manifest.json.sig"
 
           jq -n \
-            --arg repository "ItzGlace/vaxa-vm" \
+            --arg repository "ItzGlace/vexa-vm" \
             --arg release "${release}" \
             --argjson published_at "${published_at}" \
             --arg url "${asset_url}" \

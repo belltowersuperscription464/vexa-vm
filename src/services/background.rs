@@ -11,7 +11,7 @@ use chrono::Utc;
 use futures_util::{stream, StreamExt};
 use serde_json::{json, Value};
 use tokio::{io::AsyncWriteExt, process::Command, time::MissedTickBehavior};
-use tracing::{error, info, warn};
+use tracing::{debug, error, info, warn};
 
 use crate::{
     error::{AppError, AppResult},
@@ -29,6 +29,15 @@ use crate::{
 };
 
 const GIB: u64 = 1024 * 1024 * 1024;
+const MIB: u64 = 1024 * 1024;
+
+#[derive(Clone, Debug)]
+struct BalloonCandidate {
+    name: String,
+    maximum_mib: u64,
+    current_mib: u64,
+    used_mib: u64,
+}
 
 #[derive(Clone, Default)]
 struct PreviousVmSample {
@@ -41,12 +50,146 @@ pub fn spawn(state: Arc<AppState>) {
     tokio::spawn(routed_network_loop(state.clone()));
     tokio::spawn(inventory_loop(state.clone()));
     tokio::spawn(metrics_loop(state.clone()));
+    tokio::spawn(memory_balloon_loop(state.clone()));
     tokio::spawn(traffic_quota_loop(state.clone()));
     tokio::spawn(network_security_loop(state.clone()));
     tokio::spawn(guest_tools_health_loop(state.clone()));
     tokio::spawn(update_status_audit_loop(state.clone()));
     tokio::spawn(job_loop(state.clone()));
     tokio::spawn(maintenance_loop(state));
+}
+
+async fn memory_balloon_loop(state: Arc<AppState>) {
+    tokio::time::sleep(Duration::from_secs(30)).await;
+    loop {
+        if let Err(error) = reconcile_memory_balloon(&state).await {
+            warn!(error = %error, "memory balloon reconciliation failed");
+        }
+        tokio::time::sleep(Duration::from_secs(15)).await;
+    }
+}
+
+async fn reconcile_memory_balloon(state: &AppState) -> AppResult<()> {
+    let ratio = state
+        .setting_f64("general", "memory_overcommit_ratio")?
+        .filter(|ratio| (1.0..=4.0).contains(ratio))
+        .unwrap_or(1.5);
+    let host = state.host_info.read().await.clone();
+    let budget_mib = host
+        .memory
+        .total_bytes
+        .saturating_sub(256 * MIB)
+        .checked_div(MIB)
+        .unwrap_or_default();
+    let mut candidates = Vec::new();
+    for vm in state
+        .db
+        .list_vms()?
+        .into_iter()
+        .filter(|vm| vm.state == VmState::Running)
+    {
+        let stats = match state.hypervisor.stats(&vm.name).await {
+            Ok(stats) => stats,
+            Err(error) => {
+                debug!(vm_id = %vm.id, error = %error, "could not sample VM for balloon reconciliation");
+                continue;
+            }
+        };
+        let current_mib = stats
+            .memory_available_bytes
+            .unwrap_or(vm.memory_mib.saturating_mul(MIB))
+            .checked_div(MIB)
+            .unwrap_or(vm.memory_mib)
+            .clamp(256, vm.memory_mib);
+        let used_mib = stats
+            .memory_current_bytes
+            .unwrap_or(current_mib.saturating_mul(MIB))
+            .checked_div(MIB)
+            .unwrap_or(current_mib)
+            .min(current_mib);
+        candidates.push(BalloonCandidate {
+            name: vm.name,
+            maximum_mib: vm.memory_mib,
+            current_mib,
+            used_mib,
+        });
+    }
+    let plan = plan_balloon_targets(&candidates, budget_mib, ratio);
+    for (candidate, target_mib) in candidates.iter().zip(plan) {
+        // A deadband avoids needless libvirt traffic and balloon oscillation
+        // around small guest-statistics changes.
+        if candidate.current_mib.abs_diff(target_mib) < 64 {
+            continue;
+        }
+        match state
+            .hypervisor
+            .set_memory_balloon(&candidate.name, target_mib)
+            .await
+        {
+            Ok(()) => {
+                debug!(vm = %candidate.name, current_mib = candidate.current_mib, target_mib, "adjusted VM memory balloon")
+            }
+            Err(error) => {
+                warn!(vm = %candidate.name, target_mib, error = %error, "could not adjust VM memory balloon")
+            }
+        }
+    }
+    Ok(())
+}
+
+fn plan_balloon_targets(candidates: &[BalloonCandidate], budget_mib: u64, ratio: f64) -> Vec<u64> {
+    let floors = candidates
+        .iter()
+        .map(|candidate| {
+            (((candidate.maximum_mib as f64) / ratio).ceil() as u64)
+                .max(256)
+                .min(candidate.maximum_mib)
+        })
+        .collect::<Vec<_>>();
+    let floor_total = floors.iter().copied().fold(0u64, u64::saturating_add);
+    if floor_total >= budget_mib {
+        return floors;
+    }
+
+    let desired = candidates
+        .iter()
+        .zip(&floors)
+        .map(|(candidate, floor)| {
+            let headroom = (candidate.maximum_mib / 4).clamp(256, 2048);
+            candidate
+                .used_mib
+                .saturating_add(headroom)
+                .max(*floor)
+                .min(candidate.maximum_mib)
+        })
+        .collect::<Vec<_>>();
+    let wanted = desired
+        .iter()
+        .zip(&floors)
+        .map(|(desired, floor)| desired.saturating_sub(*floor))
+        .collect::<Vec<_>>();
+    let wanted_total = wanted.iter().copied().fold(0u64, u64::saturating_add);
+    if wanted_total == 0 {
+        return floors;
+    }
+    let remaining = budget_mib.saturating_sub(floor_total).min(wanted_total);
+    let mut targets = floors.clone();
+    let mut assigned = 0u64;
+    for (target, wanted) in targets.iter_mut().zip(&wanted) {
+        let share = remaining.saturating_mul(*wanted) / wanted_total;
+        *target = target.saturating_add(share);
+        assigned = assigned.saturating_add(share);
+    }
+    let mut remainder = remaining.saturating_sub(assigned);
+    for ((target, desired), wanted) in targets.iter_mut().zip(&desired).zip(&wanted) {
+        if remainder == 0 {
+            break;
+        }
+        let room = desired.saturating_sub(*target).min(remainder).min(*wanted);
+        *target = target.saturating_add(room);
+        remainder = remainder.saturating_sub(room);
+    }
+    targets
 }
 
 async fn routed_network_loop(state: Arc<AppState>) {
@@ -556,6 +699,15 @@ fn delta_rate(current: u64, previous: u64, elapsed: f64) -> f64 {
 
 fn accounted_traffic_delta(prior: &PreviousVmSample, current: &VmStats, traffic_generation: u64) -> u64 {
     if prior.sampled_at == 0 || prior.traffic_generation != traffic_generation {
+        return 0;
+    }
+    // libvirt reports zeroed interface counters while a domain interface is
+    // temporarily unavailable (shutdown, rebuild, reconnect, or daemon race).
+    // Treat the first non-zero sample after that gap as a fresh baseline. If we
+    // subtract zero here, the VM's entire lifetime counter is charged again.
+    if (prior.stats.network_rx_bytes == 0 && prior.stats.network_tx_bytes == 0)
+        && (current.network_rx_bytes > 0 || current.network_tx_bytes > 0)
+    {
         return 0;
     }
     current
@@ -2562,11 +2714,35 @@ async fn maintenance_loop(state: Arc<AppState>) {
 #[cfg(test)]
 mod cloudbase_network_tests {
     use super::{
-        accounted_traffic_delta, cloudbase_static_subnet, is_windows_os_family, remove_vm_provisioning_seed,
-        windows_computer_name, windows_disk_layout, windows_first_logon_command, PreviousVmSample,
+        accounted_traffic_delta, cloudbase_static_subnet, is_windows_os_family, plan_balloon_targets,
+        remove_vm_provisioning_seed, windows_computer_name, windows_disk_layout, windows_first_logon_command,
+        BalloonCandidate, PreviousVmSample,
     };
     use crate::hypervisor::VmStats;
     use crate::models::AddressFamily;
+
+    #[test]
+    fn balloon_plan_preserves_floors_and_shares_pressure_headroom() {
+        let candidates = vec![
+            BalloonCandidate {
+                name: "vm-a".into(),
+                maximum_mib: 4096,
+                current_mib: 2048,
+                used_mib: 1800,
+            },
+            BalloonCandidate {
+                name: "vm-b".into(),
+                maximum_mib: 4096,
+                current_mib: 2048,
+                used_mib: 900,
+            },
+        ];
+        let targets = plan_balloon_targets(&candidates, 4600, 2.0);
+        assert_eq!(targets.iter().sum::<u64>(), 4600);
+        assert!(targets[0] > targets[1], "the busier guest receives more headroom");
+        assert!(targets.iter().all(|target| (2048..=4096).contains(target)));
+        assert_eq!(plan_balloon_targets(&candidates, 4096, 2.0), vec![2048, 2048]);
+    }
 
     #[test]
     fn cloudbase_ipv4_uses_a_dotted_network_mask() {
@@ -2662,6 +2838,26 @@ mod cloudbase_network_tests {
 
         assert_eq!(accounted_traffic_delta(&prior, &current, 4), 200);
         assert_eq!(accounted_traffic_delta(&prior, &current, 5), 0);
+    }
+
+    #[test]
+    fn traffic_accounting_does_not_recharge_cumulative_counters_after_zero_gap() {
+        let unavailable = PreviousVmSample {
+            sampled_at: 100,
+            stats: VmStats {
+                network_rx_bytes: 0,
+                network_tx_bytes: 0,
+                ..VmStats::default()
+            },
+            traffic_generation: 4,
+        };
+        let restored = VmStats {
+            network_rx_bytes: 828 * 1024 * 1024 * 1024,
+            network_tx_bytes: 829 * 1024 * 1024 * 1024,
+            ..VmStats::default()
+        };
+
+        assert_eq!(accounted_traffic_delta(&unavailable, &restored, 4), 0);
     }
 
     #[tokio::test]

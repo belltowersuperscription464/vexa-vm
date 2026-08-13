@@ -211,11 +211,7 @@ impl LibvirtHypervisor {
     /// Run qemu-agent-command through virsh's interactive stdin. Keeping the
     /// serialized command off argv prevents RouterOS bootstrap passwords from
     /// being exposed in transient process listings.
-    async fn qemu_agent_command_private(
-        &self,
-        name: &str,
-        command: &Value,
-    ) -> HypervisorResult<Value> {
+    async fn qemu_agent_command_private(&self, name: &str, command: &Value) -> HypervisorResult<Value> {
         validate_vm_name(name)?;
         let encoded = serde_json::to_string(command).map_err(|error| {
             HypervisorError::InvalidInput(format!("guest-agent command is not valid JSON: {error}"))
@@ -225,9 +221,10 @@ impl LibvirtHypervisor {
                 "guest-agent command exceeded the safe interactive command envelope".into(),
             ));
         }
-        let program = self.virsh.as_deref().ok_or_else(|| {
-            HypervisorError::BackendUnavailable("/usr/bin/virsh is not installed".into())
-        })?;
+        let program = self
+            .virsh
+            .as_deref()
+            .ok_or_else(|| HypervisorError::BackendUnavailable("/usr/bin/virsh is not installed".into()))?;
         let mut child = Command::new(program)
             .arg("--quiet")
             .arg("--connect")
@@ -278,9 +275,10 @@ impl LibvirtHypervisor {
     }
 
     async fn ip(&self, operation: &str, args: &[&str]) -> HypervisorResult<String> {
-        let program = self.ip.as_deref().ok_or_else(|| {
-            HypervisorError::BackendUnavailable("/usr/sbin/ip is not installed".into())
-        })?;
+        let program = self
+            .ip
+            .as_deref()
+            .ok_or_else(|| HypervisorError::BackendUnavailable("/usr/sbin/ip is not installed".into()))?;
         let mut command = Command::new(program);
         command
             .args(args)
@@ -428,9 +426,7 @@ impl LibvirtHypervisor {
         let target = utf8_path(target)?;
         let size = format!("{disk_gib}G");
         let args = match image {
-            VmImage::Qcow2 { path }
-            | VmImage::Raw { path }
-            | VmImage::ApplianceRaw { path } => {
+            VmImage::Qcow2 { path } | VmImage::Raw { path } | VmImage::ApplianceRaw { path } => {
                 let source = self.validate_source_path(path).await?;
                 vec![
                     "create".into(),
@@ -469,10 +465,7 @@ impl LibvirtHypervisor {
                 xml_escape(tap_name),
             )
         } else {
-            let bridge = request
-                .bridge
-                .as_deref()
-                .unwrap_or(&self.config.default_bridge);
+            let bridge = request.bridge.as_deref().unwrap_or(&self.config.default_bridge);
             validate_bridge_name(bridge)?;
             format!(
                 "<interface type='bridge'><mac address='{{mac}}'/><source bridge='{}'/><target dev='{}'/><model type='virtio'/>{{bandwidth}}</interface>",
@@ -540,13 +533,12 @@ impl LibvirtHypervisor {
         // Windows Setup and RouterOS CHR both provide a reliable legacy VGA
         // console before vendor drivers are installed. virtio-gpu can leave
         // their VNC installer console blank during the critical first boot.
-        let video_model = if request.image.is_unattended_windows()
-            || request.image.is_preconfigured_appliance()
-        {
-            "vga"
-        } else {
-            "virtio"
-        };
+        let video_model =
+            if request.image.is_unattended_windows() || request.image.is_preconfigured_appliance() {
+                "vga"
+            } else {
+                "virtio"
+            };
 
         let interface = interface
             .replace("{mac}", &mac)
@@ -555,7 +547,7 @@ impl LibvirtHypervisor {
             "<domain type='kvm'>\
              <name>{name}</name>\
              <memory unit='MiB'>{memory}</memory>\
-             <currentMemory unit='MiB'>{memory}</currentMemory>\
+             <currentMemory unit='MiB'>{initial_memory}</currentMemory>\
              <vcpu placement='static'>{vcpus}</vcpu>\
              <cpu mode='host-passthrough' check='none'/>\
              <os{firmware}><type arch='x86_64' machine='{machine_type}'>hvm</type><boot dev='hd'/><boot dev='cdrom'/></os>\
@@ -577,6 +569,7 @@ impl LibvirtHypervisor {
              </devices>\
              </domain>",
             memory = request.memory_mib,
+            initial_memory = request.initial_memory_mib.unwrap_or(request.memory_mib),
             vcpus = request.vcpus,
         ))
     }
@@ -1150,6 +1143,32 @@ impl Hypervisor for LibvirtHypervisor {
         self.inspect_vm(name).await
     }
 
+    async fn set_memory_balloon(&self, name: &str, target_mib: u64) -> HypervisorResult<()> {
+        validate_vm_name(name)?;
+        if !(256..=16 * 1024 * 1024).contains(&target_mib) {
+            return Err(HypervisorError::InvalidInput(
+                "live balloon target must be between 256 MiB and 16 TiB".into(),
+            ));
+        }
+        let _guard = self.mutation_lock.lock().await;
+        let current = self.inspect_vm(name).await?;
+        if !current.state.is_active() {
+            return Err(HypervisorError::Conflict(
+                "memory ballooning requires a running VM".into(),
+            ));
+        }
+        if target_mib > current.memory_mib {
+            return Err(HypervisorError::InvalidInput(format!(
+                "live balloon target exceeds the VM's {} MiB memory entitlement",
+                current.memory_mib
+            )));
+        }
+        let value = format!("{target_mib}MiB");
+        self.virsh("set-live-memory-balloon", &["setmem", name, &value, "--live"])
+            .await?;
+        Ok(())
+    }
+
     async fn reinstall(&self, name: &str, request: ReinstallVmRequest) -> HypervisorResult<VmInfo> {
         validate_vm_name(name)?;
         if !(1..=1024 * 1024).contains(&request.disk_gib) {
@@ -1178,7 +1197,9 @@ impl Hypervisor for LibvirtHypervisor {
             self.virsh("stop-for-reinstall", &["destroy", name]).await?;
         }
         if let Some(path) = request.guest_tools_socket.as_deref() {
-            let domain_xml = self.virsh("inspect-guest-tools-channel", &["dumpxml", name]).await?;
+            let domain_xml = self
+                .virsh("inspect-guest-tools-channel", &["dumpxml", name])
+                .await?;
             if !domain_xml.contains("com.vexa.guest_tools.0") {
                 let channel_xml = guest_tools_channel_xml(path)?;
                 self.virsh_with_input(
@@ -1374,9 +1395,7 @@ impl Hypervisor for LibvirtHypervisor {
                     "legacy ethernet VM has an invalid persistent target interface".into(),
                 )
             })?;
-            let tuntaps = self
-                .ip("inspect-persistent-tap", &["tuntap", "show"])
-                .await?;
+            let tuntaps = self.ip("inspect-persistent-tap", &["tuntap", "show"]).await?;
             validate_persistent_tap(&tuntaps, interface)?;
             self.ip(
                 "set-persistent-tap-link",
@@ -1574,10 +1593,7 @@ fn validate_persistent_tap(output: &str, expected: &str) -> HypervisorResult<()>
             (fields.first().copied() == Some(prefix.as_str())).then_some(fields)
         })
         .collect::<Vec<_>>();
-    if matches.len() != 1
-        || matches[0].get(1).copied() != Some("tap")
-        || !matches[0].contains(&"persist")
-    {
+    if matches.len() != 1 || matches[0].get(1).copied() != Some("tap") || !matches[0].contains(&"persist") {
         return Err(HypervisorError::InvalidResponse(format!(
             "legacy ethernet target '{expected}' is not exactly one persistent TAP"
         )));
@@ -1888,10 +1904,7 @@ mod tests {
 
     #[test]
     fn managed_tap_names_are_stable_and_safe() {
-        assert_eq!(
-            stable_tap_name("52:54:00:AA:01:ff").unwrap(),
-            "vx525400aa01ff"
-        );
+        assert_eq!(stable_tap_name("52:54:00:AA:01:ff").unwrap(), "vx525400aa01ff");
         assert!(stable_tap_name("not-a-mac").is_err());
         assert!(stable_tap_name("52:54:00:aa:01:ff").unwrap().len() <= 15);
     }
@@ -1915,17 +1928,16 @@ mod tests {
     fn seed_eject_matches_the_exact_cdrom_source() {
         let output = "Type Device Target Source\n---------------------------------------------\nfile disk vda /var/lib/libvirt/images/vm.qcow2\nfile cdrom sdb /var/lib/vexa-vm/cloud-init/vm-1.iso\nfile cdrom sdc /var/lib/vexa-vm/isos/ubuntu.iso\n";
         assert_eq!(
-            seed_cdrom_target(
-                output,
-                Path::new("/var/lib/vexa-vm/cloud-init/vm-1.iso")
-            )
-            .unwrap()
-            .as_deref(),
+            seed_cdrom_target(output, Path::new("/var/lib/vexa-vm/cloud-init/vm-1.iso"))
+                .unwrap()
+                .as_deref(),
             Some("sdb")
         );
-        assert!(seed_cdrom_target(output, Path::new("/var/lib/vexa-vm/cloud-init/other.iso"))
-            .unwrap()
-            .is_none());
+        assert!(
+            seed_cdrom_target(output, Path::new("/var/lib/vexa-vm/cloud-init/other.iso"))
+                .unwrap()
+                .is_none()
+        );
     }
 
     #[test]
@@ -1946,13 +1958,8 @@ mod tests {
     async fn permits_cleanup_when_a_managed_disk_is_already_missing() {
         let root = std::env::temp_dir().join(format!("vexa-delete-test-{}", Uuid::new_v4()));
         std::fs::create_dir_all(&root).unwrap();
-        let backend = LibvirtHypervisor::new(LibvirtConfig::new(
-            "qemu:///system",
-            &root,
-            vec![],
-            "virbr0",
-        ))
-        .unwrap();
+        let backend =
+            LibvirtHypervisor::new(LibvirtConfig::new("qemu:///system", &root, vec![], "virbr0")).unwrap();
 
         let missing = root.join("missing.qcow2");
         assert!(backend

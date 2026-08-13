@@ -52,6 +52,24 @@ const MIB_BYTES: u64 = 1024 * 1024;
 const GIB_BYTES: u64 = 1024 * MIB_BYTES;
 const HOST_MEMORY_RESERVE_BYTES: u64 = 256 * MIB_BYTES;
 const HOST_DISK_RESERVE_BYTES: u64 = 2 * GIB_BYTES;
+const DEFAULT_CPU_OVERCOMMIT_RATIO: f64 = 4.0;
+const DEFAULT_MEMORY_OVERCOMMIT_RATIO: f64 = 1.5;
+const MAX_CPU_OVERCOMMIT_RATIO: f64 = 16.0;
+const MAX_MEMORY_OVERCOMMIT_RATIO: f64 = 4.0;
+
+#[derive(Clone, Copy, Debug)]
+struct CapacityPolicy {
+    cpu_overcommit_ratio: f64,
+    memory_overcommit_ratio: f64,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct ComputeCapacity {
+    schedulable_vcpus: u64,
+    available_vcpus: u64,
+    schedulable_memory_bytes: u64,
+    available_memory_bytes: u64,
+}
 
 #[derive(Deserialize, Default)]
 pub struct ListQuery {
@@ -410,6 +428,21 @@ pub async fn host(
         .iter()
         .map(|vm| vm.memory_mib.saturating_mul(1024 * 1024))
         .sum();
+    let scheduled = vms.iter().filter(|vm| vm.state != crate::models::VmState::Error);
+    let scheduled_vcpus = scheduled
+        .clone()
+        .fold(0u64, |total, vm| total.saturating_add(u64::from(vm.vcpus)));
+    let scheduled_memory_bytes = scheduled.fold(0u64, |total, vm| {
+        total.saturating_add(vm.memory_mib.saturating_mul(MIB_BYTES))
+    });
+    let capacity_policy = capacity_policy(&state)?;
+    let compute_capacity = compute_capacity(
+        u64::from(host.cpu.logical_cores),
+        host.memory.total_bytes,
+        scheduled_vcpus,
+        scheduled_memory_bytes,
+        capacity_policy,
+    );
     let primary_interface = host
         .primary_interface
         .as_deref()
@@ -439,6 +472,27 @@ pub async fn host(
     object.insert("ram_total_bytes".into(), json!(host.memory.total_bytes));
     object.insert("allocated_vcpus".into(), json!(allocated_vcpus));
     object.insert("allocated_ram_bytes".into(), json!(allocated_ram_bytes));
+    object.insert(
+        "capacity_policy".into(),
+        json!({
+            "cpu_overcommit_ratio": capacity_policy.cpu_overcommit_ratio,
+            "memory_overcommit_ratio": capacity_policy.memory_overcommit_ratio,
+            "memory_backing": "virtio-balloon",
+        }),
+    );
+    object.insert(
+        "schedulable_vcpus".into(),
+        json!(compute_capacity.schedulable_vcpus),
+    );
+    object.insert("available_vcpus".into(), json!(compute_capacity.available_vcpus));
+    object.insert(
+        "schedulable_memory_bytes".into(),
+        json!(compute_capacity.schedulable_memory_bytes),
+    );
+    object.insert(
+        "available_memory_bytes".into(),
+        json!(compute_capacity.available_memory_bytes),
+    );
     object.insert("listen_address".into(), json!(state.config.bind.ip()));
     object.insert("listen_port".into(), json!(state.config.bind.port()));
     object.insert("public_url".into(), json!(state.config.public_url));
@@ -667,7 +721,7 @@ pub async fn create_vm(
             input.spec.name
         )));
     }
-    validate_create_capacity(&state, &input.spec, input.start).await?;
+    request.initial_memory_mib = Some(validate_create_capacity(&state, &input.spec, input.start).await?);
     let vm = match password.as_deref() {
         Some(password) => state
             .db
@@ -3223,6 +3277,9 @@ pub async fn update_settings(
             .ok_or_else(|| AppError::Validation(format!("setting section '{key}' must be an object")))?;
         merged_object.extend(patch_object.clone());
         validate_setting_section(key, &merged)?;
+        if key == "general" {
+            validate_capacity_policy_change(&state, &merged).await?;
+        }
         merged_values.insert(key.clone(), merged);
     }
     for (key, value) in &merged_values {
@@ -3261,6 +3318,55 @@ pub async fn update_settings(
     list_settings(State(state), Extension(auth)).await
 }
 
+async fn validate_capacity_policy_change(state: &AppState, general: &Value) -> AppResult<()> {
+    let cpu_ratio = general
+        .get("cpu_overcommit_ratio")
+        .and_then(Value::as_f64)
+        .unwrap_or(DEFAULT_CPU_OVERCOMMIT_RATIO);
+    let memory_ratio = general
+        .get("memory_overcommit_ratio")
+        .and_then(Value::as_f64)
+        .unwrap_or(DEFAULT_MEMORY_OVERCOMMIT_RATIO);
+    let host = state.host_info.read().await.clone();
+    let scheduled = state
+        .db
+        .list_vms()?
+        .into_iter()
+        .filter(|vm| vm.state != crate::models::VmState::Error)
+        .collect::<Vec<_>>();
+    let allocated_vcpus = scheduled
+        .iter()
+        .fold(0u64, |total, vm| total.saturating_add(u64::from(vm.vcpus)));
+    let allocated_memory_bytes = scheduled.iter().fold(0u64, |total, vm| {
+        total.saturating_add(vm.memory_mib.saturating_mul(MIB_BYTES))
+    });
+    let capacity = compute_capacity(
+        u64::from(host.cpu.logical_cores),
+        host.memory.total_bytes,
+        0,
+        0,
+        CapacityPolicy {
+            cpu_overcommit_ratio: cpu_ratio,
+            memory_overcommit_ratio: memory_ratio,
+        },
+    );
+    if allocated_vcpus > capacity.schedulable_vcpus {
+        return Err(AppError::Conflict(format!(
+            "CPU ratio {:.2}x provides {} vCPU but {} vCPU is already allocated",
+            cpu_ratio, capacity.schedulable_vcpus, allocated_vcpus
+        )));
+    }
+    if allocated_memory_bytes > capacity.schedulable_memory_bytes {
+        return Err(AppError::Conflict(format!(
+            "memory ratio {:.2}x provides {} MiB but {} MiB is already allocated",
+            memory_ratio,
+            capacity.schedulable_memory_bytes / MIB_BYTES,
+            allocated_memory_bytes / MIB_BYTES
+        )));
+    }
+    Ok(())
+}
+
 fn validate_setting_section(section: &str, value: &Value) -> AppResult<()> {
     let object = value
         .as_object()
@@ -3273,6 +3379,8 @@ fn validate_setting_section(section: &str, value: &Value) -> AppResult<()> {
             "ntp_servers",
             "sample_interval_seconds",
             "metrics_retention_days",
+            "cpu_overcommit_ratio",
+            "memory_overcommit_ratio",
         ],
         "network" => &[
             "default_bridge",
@@ -3326,6 +3434,18 @@ fn validate_setting_section(section: &str, value: &Value) -> AppResult<()> {
                 1,
                 3650,
                 "general.metrics_retention_days",
+            )?;
+            validate_f64_range(
+                object.get("cpu_overcommit_ratio"),
+                1.0,
+                MAX_CPU_OVERCOMMIT_RATIO,
+                "general.cpu_overcommit_ratio",
+            )?;
+            validate_f64_range(
+                object.get("memory_overcommit_ratio"),
+                1.0,
+                MAX_MEMORY_OVERCOMMIT_RATIO,
+                "general.memory_overcommit_ratio",
             )?;
         }
         "network" => {
@@ -3406,6 +3526,21 @@ fn validate_u64_range(value: Option<&Value>, minimum: u64, maximum: u64, name: &
         let value = value
             .as_u64()
             .ok_or_else(|| AppError::Validation(format!("{name} must be an integer")))?;
+        if !(minimum..=maximum).contains(&value) {
+            return Err(AppError::Validation(format!(
+                "{name} must be between {minimum} and {maximum}"
+            )));
+        }
+    }
+    Ok(())
+}
+
+fn validate_f64_range(value: Option<&Value>, minimum: f64, maximum: f64, name: &str) -> AppResult<()> {
+    if let Some(value) = value {
+        let value = value
+            .as_f64()
+            .filter(|value| value.is_finite())
+            .ok_or_else(|| AppError::Validation(format!("{name} must be a finite number")))?;
         if !(minimum..=maximum).contains(&value) {
             return Err(AppError::Validation(format!(
                 "{name} must be between {minimum} and {maximum}"
@@ -4108,6 +4243,7 @@ fn build_create_request(state: &AppState, spec: &NewVm, start: bool) -> AppResul
         name: spec.name.clone(),
         vcpus: spec.vcpus,
         memory_mib: spec.memory_mib,
+        initial_memory_mib: None,
         disk_gib: spec.disk_gib,
         image,
         cloud_init_iso: None,
@@ -4137,12 +4273,12 @@ fn build_create_request(state: &AppState, spec: &NewVm, start: bool) -> AppResul
 /// Reserve enough host capacity for the control plane before a guest is queued.
 /// This is deliberately enforced at the API boundary as well as in the panel,
 /// so an API client cannot create a domain that the KVM node cannot safely run.
-async fn validate_create_capacity(state: &AppState, spec: &NewVm, start: bool) -> AppResult<()> {
+async fn validate_create_capacity(state: &AppState, spec: &NewVm, start: bool) -> AppResult<u64> {
     // The in-process mock deliberately permits oversized fixtures so the HTTP
     // lifecycle suite can exercise resource-management endpoints on any CI host.
     // Real KVM/libvirt deployments always use the checks below.
     if state.config.hypervisor_mode == crate::config::HypervisorMode::Mock {
-        return Ok(());
+        return Ok(spec.memory_mib);
     }
     let host = state.host_info.read().await.clone();
     let vms = state.db.list_vms()?;
@@ -4153,36 +4289,43 @@ async fn validate_create_capacity(state: &AppState, spec: &NewVm, start: bool) -
     let allocated_memory_bytes = scheduled.fold(0u64, |total, vm| {
         total.saturating_add(vm.memory_mib.saturating_mul(MIB_BYTES))
     });
-    let host_vcpus = u64::from(host.cpu.logical_cores);
-    let available_vcpus = host_vcpus.saturating_sub(allocated_vcpus);
-    if u64::from(spec.vcpus) > available_vcpus {
+    let policy = capacity_policy(state)?;
+    let capacity = compute_capacity(
+        u64::from(host.cpu.logical_cores),
+        host.memory.total_bytes,
+        allocated_vcpus,
+        allocated_memory_bytes,
+        policy,
+    );
+    if u64::from(spec.vcpus) > capacity.available_vcpus {
         return Err(AppError::Validation(format!(
-            "requested {} vCPU exceeds this node's safe capacity of {} vCPU",
-            spec.vcpus, available_vcpus
+            "requested {} vCPU exceeds this node's overcommit capacity of {} vCPU (CPU ratio {:.2}x)",
+            spec.vcpus, capacity.available_vcpus, policy.cpu_overcommit_ratio
         )));
     }
 
-    let schedulable_memory = host.memory.total_bytes.saturating_sub(HOST_MEMORY_RESERVE_BYTES);
-    let available_memory = schedulable_memory.saturating_sub(allocated_memory_bytes);
     let requested_memory = spec.memory_mib.saturating_mul(MIB_BYTES);
-    if requested_memory > available_memory {
+    if requested_memory > capacity.available_memory_bytes {
         return Err(AppError::Validation(format!(
-            "requested {} MiB memory exceeds this node's safe capacity of {} MiB (256 MiB is reserved for the host)",
+            "requested {} MiB memory exceeds this node's balloon-backed overcommit capacity of {} MiB (memory ratio {:.2}x; 256 MiB remains reserved for the host)",
             spec.memory_mib,
-            available_memory / MIB_BYTES
+            capacity.available_memory_bytes / MIB_BYTES,
+            policy.memory_overcommit_ratio,
         )));
     }
 
     let metrics = state.host_detector.sample().await?;
+    let initial_memory_mib = balloon_floor_mib(spec.memory_mib, policy.memory_overcommit_ratio);
     if start {
         let live_memory = metrics
             .memory
             .available_bytes
             .saturating_sub(HOST_MEMORY_RESERVE_BYTES);
-        if requested_memory > live_memory {
+        let initial_memory = initial_memory_mib.saturating_mul(MIB_BYTES);
+        if initial_memory > live_memory {
             return Err(AppError::Validation(format!(
-                "requested {} MiB memory exceeds the {} MiB currently available for a new running VM",
-                spec.memory_mib,
+                "the VM needs a {} MiB balloon floor but only {} MiB is currently available for a new running VM",
+                initial_memory_mib,
                 live_memory / MIB_BYTES
             )));
         }
@@ -4217,7 +4360,52 @@ async fn validate_create_capacity(state: &AppState, spec: &NewVm, start: bool) -
             available_disk / GIB_BYTES
         )));
     }
-    Ok(())
+    Ok(initial_memory_mib)
+}
+
+fn capacity_policy(state: &AppState) -> AppResult<CapacityPolicy> {
+    let cpu_overcommit_ratio = state
+        .setting_f64("general", "cpu_overcommit_ratio")?
+        .filter(|ratio| (1.0..=MAX_CPU_OVERCOMMIT_RATIO).contains(ratio))
+        .unwrap_or(DEFAULT_CPU_OVERCOMMIT_RATIO);
+    let memory_overcommit_ratio = state
+        .setting_f64("general", "memory_overcommit_ratio")?
+        .filter(|ratio| (1.0..=MAX_MEMORY_OVERCOMMIT_RATIO).contains(ratio))
+        .unwrap_or(DEFAULT_MEMORY_OVERCOMMIT_RATIO);
+    Ok(CapacityPolicy {
+        cpu_overcommit_ratio,
+        memory_overcommit_ratio,
+    })
+}
+
+fn compute_capacity(
+    host_vcpus: u64,
+    host_memory_bytes: u64,
+    allocated_vcpus: u64,
+    allocated_memory_bytes: u64,
+    policy: CapacityPolicy,
+) -> ComputeCapacity {
+    let schedulable_vcpus = scaled_capacity(host_vcpus, policy.cpu_overcommit_ratio);
+    let physical_guest_memory = host_memory_bytes.saturating_sub(HOST_MEMORY_RESERVE_BYTES);
+    let schedulable_memory_bytes = scaled_capacity(physical_guest_memory, policy.memory_overcommit_ratio);
+    ComputeCapacity {
+        schedulable_vcpus,
+        available_vcpus: schedulable_vcpus.saturating_sub(allocated_vcpus),
+        schedulable_memory_bytes,
+        available_memory_bytes: schedulable_memory_bytes.saturating_sub(allocated_memory_bytes),
+    }
+}
+
+fn scaled_capacity(physical: u64, ratio: f64) -> u64 {
+    ((physical as f64) * ratio).floor().min(u64::MAX as f64) as u64
+}
+
+fn balloon_floor_mib(entitlement_mib: u64, memory_overcommit_ratio: f64) -> u64 {
+    (((entitlement_mib as f64) / memory_overcommit_ratio)
+        .ceil()
+        .min(u64::MAX as f64) as u64)
+        .max(256)
+        .min(entitlement_mib)
 }
 
 fn pending_create_disk_reservations(vms: &[Vm]) -> u64 {
@@ -5331,6 +5519,28 @@ mod image_catalog_tests {
         assert_eq!(pending_create_disk_reservations(&vms), 7 * GIB_BYTES);
     }
 
+    #[test]
+    fn overcommit_capacity_and_balloon_floor_are_bounded() {
+        let policy = CapacityPolicy {
+            cpu_overcommit_ratio: 4.0,
+            memory_overcommit_ratio: 2.0,
+        };
+        let capacity = compute_capacity(
+            8,
+            HOST_MEMORY_RESERVE_BYTES + (32 * GIB_BYTES),
+            20,
+            40 * GIB_BYTES,
+            policy,
+        );
+        assert_eq!(capacity.schedulable_vcpus, 32);
+        assert_eq!(capacity.available_vcpus, 12);
+        assert_eq!(capacity.schedulable_memory_bytes, 64 * GIB_BYTES);
+        assert_eq!(capacity.available_memory_bytes, 24 * GIB_BYTES);
+        assert_eq!(balloon_floor_mib(4096, 2.0), 2048);
+        assert_eq!(balloon_floor_mib(512, 4.0), 256);
+        assert_eq!(balloon_floor_mib(4096, 1.0), 4096);
+    }
+
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn simultaneous_creates_publish_only_one_overlapping_capacity_reservation() {
         let root = tempfile::tempdir().unwrap();
@@ -5366,6 +5576,10 @@ mod image_catalog_tests {
         .validate()
         .unwrap();
         let state = AppState::initialize(config).await.unwrap();
+        let mut general = state.db.get_setting("general").unwrap().unwrap().value;
+        general["cpu_overcommit_ratio"] = json!(1.0);
+        general["memory_overcommit_ratio"] = json!(1.0);
+        state.db.set_setting("general", &general, false, None).unwrap();
         {
             // Make CPU the deterministic contested dimension independently of
             // the machine running the test. Each request fits by itself; the

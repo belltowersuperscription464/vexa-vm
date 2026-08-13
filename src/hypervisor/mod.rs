@@ -147,13 +147,21 @@ pub struct VmStats {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "kebab-case")]
 pub enum VmImage {
-    Qcow2 { path: PathBuf },
-    Raw { path: PathBuf },
+    Qcow2 {
+        path: PathBuf,
+    },
+    Raw {
+        path: PathBuf,
+    },
     /// A ready-to-boot raw appliance disk which does not consume cloud-init
     /// metadata. RouterOS CHR is the first supported appliance; its built-in
     /// QEMU Guest Agent completes automatic host-only provisioning.
-    ApplianceRaw { path: PathBuf },
-    InstallerIso { path: PathBuf },
+    ApplianceRaw {
+        path: PathBuf,
+    },
+    InstallerIso {
+        path: PathBuf,
+    },
     /// A Windows installer ISO paired with a verified virtio-win driver ISO.
     /// Vexa generates an Autounattend answer disk for this variant.
     UnattendedWindowsIso {
@@ -224,7 +232,11 @@ pub enum Firmware {
 pub struct CreateVmRequest {
     pub name: String,
     pub vcpus: u32,
+    /// Maximum guest-visible memory entitlement. `initial_memory_mib` is the
+    /// boot-time balloon target when memory overcommit is enabled.
     pub memory_mib: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub initial_memory_mib: Option<u64>,
     pub disk_gib: u64,
     pub image: VmImage,
     pub cloud_init_iso: Option<PathBuf>,
@@ -319,6 +331,15 @@ pub trait Hypervisor: Send + Sync {
         Ok(())
     }
     async fn resize(&self, name: &str, request: ResizeVmRequest) -> HypervisorResult<VmInfo>;
+    /// Change only the running guest's VirtIO balloon target. The persistent
+    /// maximum entitlement remains unchanged and is still reported by VM
+    /// inventory and API resource fields.
+    async fn set_memory_balloon(&self, name: &str, target_mib: u64) -> HypervisorResult<()> {
+        let _ = (name, target_mib);
+        Err(HypervisorError::BackendUnavailable(
+            "this hypervisor backend does not support live memory ballooning".into(),
+        ))
+    }
     async fn reinstall(&self, name: &str, request: ReinstallVmRequest) -> HypervisorResult<VmInfo>;
     /// Eject a generated provisioning seed from both the live and persistent
     /// domain definitions. Implementations must verify that the CD-ROM source
@@ -442,6 +463,14 @@ pub(crate) fn validate_create_request(request: &CreateVmRequest) -> HypervisorRe
             "memory must be between 256 MiB and 16 TiB".into(),
         ));
     }
+    if request
+        .initial_memory_mib
+        .is_some_and(|value| !(256..=request.memory_mib).contains(&value))
+    {
+        return Err(HypervisorError::InvalidInput(
+            "initial balloon memory must be between 256 MiB and the VM memory entitlement".into(),
+        ));
+    }
     if !(1..=1024 * 1024).contains(&request.disk_gib) {
         return Err(HypervisorError::InvalidInput(
             "disk capacity must be between 1 GiB and 1 PiB".into(),
@@ -524,6 +553,7 @@ mod tests {
             name: "machine-test".into(),
             vcpus: 2,
             memory_mib: 2048,
+            initial_memory_mib: None,
             disk_gib: 20,
             image: VmImage::Blank,
             cloud_init_iso: None,

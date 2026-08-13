@@ -2227,7 +2227,7 @@
           "warnings": { "type": "array", "items": { "type": "string" } }
         },
         "additionalProperties": true,
-        "description": "Detected HostInfo plus computed allocation, listener, network, hypervisor, IP-capacity, and service-health fields. Computed fields are always present in the host response."
+        "description": "Detected HostInfo plus computed allocation, overcommit policy and schedulable CPU/memory, listener, network, hypervisor, IP-capacity, and service-health fields. Additive capacity fields preserve existing API compatibility."
       },
       "HostEnvelope": {
         "type": "object",
@@ -3149,7 +3149,9 @@
           "timezone": { "type": "string", "minLength": 1, "maxLength": 128, "description": "Stored preference; does not reconfigure the host clock." },
           "ntp_servers": { "type": "array", "maxItems": 32, "items": { "type": "string", "minLength": 1, "maxLength": 253 }, "description": "Stored preference; does not reconfigure the host NTP daemon." },
           "sample_interval_seconds": { "type": "integer", "minimum": 5, "maximum": 3600 },
-          "metrics_retention_days": { "type": "integer", "minimum": 1, "maximum": 3650 }
+          "metrics_retention_days": { "type": "integer", "minimum": 1, "maximum": 3650 },
+          "cpu_overcommit_ratio": { "type": "number", "minimum": 1, "maximum": 16, "default": 4 },
+          "memory_overcommit_ratio": { "type": "number", "minimum": 1, "maximum": 4, "default": 1.5, "description": "Backed by a bounded live VirtIO balloon target; each VM retains its maximum memory entitlement." }
         },
         "additionalProperties": false
       },

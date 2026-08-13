@@ -3,6 +3,25 @@
 All notable changes to Vexa-VM are documented here. The project follows Semantic Versioning after
 the first stable release.
 
+## 0.1.4 - 2026-08-13
+
+### Added
+
+- Configurable CPU and memory overcommit ratios with 4× CPU and 1.5× memory defaults, additive host
+  capacity fields, and a Settings panel for live policy changes without altering existing API routes
+  or request envelopes.
+- Balloon-backed VM admission that preserves each VM's maximum memory entitlement while defining a
+  bounded VirtIO balloon floor and retaining host memory headroom.
+
+### Fixed
+
+- Prevented cumulative libvirt interface counters from being charged a second time after a
+  temporary zero-counter gap, avoiding false traffic-limit exhaustion and network cutoff after VM
+  rebuilds, reboots, or interface sampling gaps.
+- Added a regression test covering counter recovery after a zero sample.
+- Corrected the remaining legacy repository references in the signed updater manifest and private
+  security-report link.
+
 ## 0.1.3 - 2026-08-11
 
 ### Changed

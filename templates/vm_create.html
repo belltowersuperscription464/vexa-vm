@@ -35,7 +35,7 @@
           </section>
 
           <section data-create-step="3" class="hidden" aria-labelledby="resources-title">
-            <h2 id="resources-title" class="text-lg font-normal text-white">Compute and storage</h2><p class="mt-1 text-sm text-slate-400">Production-safe limits are calculated from current node capacity and retain headroom for the host.</p>
+            <h2 id="resources-title" class="text-lg font-normal text-white">Compute and storage</h2><p class="mt-1 text-sm text-slate-400">Schedulable limits apply the administrator's CPU and balloon-backed memory overcommit policy while retaining host headroom.</p>
             <div class="mt-6 grid gap-5 sm:grid-cols-3"><div><label for="create-cpu" class="label">vCPU cores</label><input id="create-cpu" name="cpu" type="number" class="field" min="1" max="256" step="1" value="1" required></div><div><label for="create-ram" class="label">Memory (MiB)</label><input id="create-ram" name="ram_mb" type="number" class="field" min="256" step="256" value="512" required></div><div><label for="create-disk" class="label">Disk (GiB)</label><input id="create-disk" name="disk_gb" type="number" class="field" min="5" step="1" value="10" required></div></div>
             <div class="mt-5 grid gap-3 sm:grid-cols-2"><div class="rounded-xl border border-white/[.07] bg-white/[.025] p-4"><p class="label">Compute profile</p><p class="text-sm text-slate-300">Host-passthrough CPU · VirtIO balloon</p></div><div class="rounded-xl border border-white/[.07] bg-white/[.025] p-4"><p class="label">Managed disk profile</p><p class="text-sm text-slate-300">qcow2 · VirtIO · native I/O · discard</p></div></div>
           </section>

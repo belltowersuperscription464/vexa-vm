@@ -240,6 +240,24 @@ impl Hypervisor for MockHypervisor {
         .await
     }
 
+    async fn set_memory_balloon(&self, name: &str, target_mib: u64) -> HypervisorResult<()> {
+        validate_vm_name(name)?;
+        self.with_vm_mut(name, |vm| {
+            if !vm.info.state.is_active() {
+                return Err(HypervisorError::Conflict(
+                    "memory ballooning requires a running VM".into(),
+                ));
+            }
+            if !(256..=vm.info.memory_mib).contains(&target_mib) {
+                return Err(HypervisorError::InvalidInput(
+                    "live balloon target is outside the VM memory entitlement".into(),
+                ));
+            }
+            Ok(())
+        })
+        .await
+    }
+
     async fn reinstall(&self, name: &str, request: ReinstallVmRequest) -> HypervisorResult<VmInfo> {
         if !(1..=1024 * 1024).contains(&request.disk_gib) {
             return Err(HypervisorError::InvalidInput(
@@ -262,11 +280,7 @@ impl Hypervisor for MockHypervisor {
         .await
     }
 
-    async fn detach_seed_media(
-        &self,
-        name: &str,
-        expected_source: &std::path::Path,
-    ) -> HypervisorResult<()> {
+    async fn detach_seed_media(&self, name: &str, expected_source: &std::path::Path) -> HypervisorResult<()> {
         if !expected_source.is_absolute() {
             return Err(HypervisorError::InvalidInput(
                 "seed media path must be absolute".into(),
@@ -397,6 +411,7 @@ mod tests {
             name: name.into(),
             vcpus: 2,
             memory_mib: 2048,
+            initial_memory_mib: None,
             disk_gib: 20,
             image: VmImage::Blank,
             cloud_init_iso: None,
@@ -441,13 +456,7 @@ mod tests {
             )
             .await
             .is_err());
-        backend
-            .detach_seed_media("demo-seed", &expected)
-            .await
-            .unwrap();
-        backend
-            .detach_seed_media("demo-seed", &expected)
-            .await
-            .unwrap();
+        backend.detach_seed_media("demo-seed", &expected).await.unwrap();
+        backend.detach_seed_media("demo-seed", &expected).await.unwrap();
     }
 }

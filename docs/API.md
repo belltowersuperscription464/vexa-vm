@@ -237,7 +237,12 @@ and `204`, respectively.
 
 VM-create capacity admission is serialized through publication of the
 provisional `creating` row and its job. CPU and RAM allocations in all
-non-error VM rows are counted. A `creating` row also reserves its requested
+non-error VM rows are counted against the administrator's `general.cpu_overcommit_ratio`
+and `general.memory_overcommit_ratio`. The host response adds `capacity_policy`,
+`schedulable_vcpus`, `available_vcpus`, `schedulable_memory_bytes`, and
+`available_memory_bytes`; existing fields, routes, and create payloads are unchanged.
+Memory admission uses the configured maximum entitlement while libvirt starts a guest at a bounded
+VirtIO balloon floor. A `creating` row also reserves its requested
 disk capacity until provisioning materializes the disk, preventing concurrent
 requests from both consuming the same reported filesystem headroom. The
 reservation lock is not held while the job performs hypervisor work.
@@ -595,7 +600,8 @@ JSON names `install_mode` and `checksum_sha256`.
 Only these top-level sections are writable:
 
 - `general`: `node_name`, `locale`, `timezone`, `ntp_servers`,
-  `sample_interval_seconds`, and `metrics_retention_days`;
+  `sample_interval_seconds`, `metrics_retention_days`, `cpu_overcommit_ratio`,
+  and `memory_overcommit_ratio`;
 - `network`: `default_bridge`, `default_port_limit_mbps`,
   `default_traffic_quota_bytes`, and `dns_servers`;
 - `console`: `vnc_enabled`;
@@ -611,8 +617,8 @@ storage roots, and secure-cookie flag. Those values cannot be changed through
 this endpoint. Administrator credentials use the dedicated credentials
 endpoint, not an `account` settings section.
 
-Sampling/retention, new-VM network defaults, VNC enablement, session lifetime,
-and rate limits are read dynamically by the service. `node_name`, `locale`,
+Sampling/retention, CPU and balloon-backed memory overcommit, new-VM network defaults, VNC enablement,
+session lifetime, and rate limits are read dynamically by the service. `node_name`, `locale`,
 `timezone`, and `ntp_servers` are stored control-plane preferences in this
 release; changing them does not rename the Linux host or reconfigure its locale,
 clock, or NTP daemon. Network defaults affect later VM provisioning and do not

@@ -18,8 +18,7 @@ use crate::{
     rate_limit::RateLimiter,
     security::{hash_password, Security},
     services::updater::{
-        load_fixed_trusted_release_keys, ReleaseUpdater, UpdateCoordinator,
-        UPDATE_STAGING_ROOT,
+        load_fixed_trusted_release_keys, ReleaseUpdater, UpdateCoordinator, UPDATE_STAGING_ROOT,
     },
 };
 
@@ -141,6 +140,10 @@ impl AppState {
         Ok(self.setting(section, key)?.and_then(|value| value.as_u64()))
     }
 
+    pub fn setting_f64(&self, section: &str, key: &str) -> AppResult<Option<f64>> {
+        Ok(self.setting(section, key)?.and_then(|value| value.as_f64()))
+    }
+
     pub fn setting_bool(&self, section: &str, key: &str) -> AppResult<Option<bool>> {
         Ok(self.setting(section, key)?.and_then(|value| value.as_bool()))
     }
@@ -164,10 +167,7 @@ fn ensure_guest_tools_socket_directory_mode(path: &Path) -> std::io::Result<()> 
 }
 
 #[cfg(unix)]
-fn ensure_guest_tools_socket_directory_mode_with<F>(
-    path: &Path,
-    set_permissions: F,
-) -> std::io::Result<()>
+fn ensure_guest_tools_socket_directory_mode_with<F>(path: &Path, set_permissions: F) -> std::io::Result<()>
 where
     F: FnOnce(std::fs::Permissions) -> std::io::Result<()>,
 {
@@ -267,6 +267,8 @@ fn seed_default_settings(db: &Database, config: &Config, host: &HostInfo) -> App
                 "ntp_servers": [],
                 "sample_interval_seconds": config.metrics_interval.as_secs(),
                 "metrics_retention_days": 7,
+                "cpu_overcommit_ratio": 4.0,
+                "memory_overcommit_ratio": 1.5,
             }),
         ),
         (
@@ -341,10 +343,7 @@ fn persist_host_addresses(db: &Database, info: &HostInfo) -> AppResult<()> {
         }
         let non_public = match address.address {
             std::net::IpAddr::V4(value) => {
-                value.is_private()
-                    || value.is_link_local()
-                    || value.is_unspecified()
-                    || value.is_multicast()
+                value.is_private() || value.is_link_local() || value.is_unspecified() || value.is_multicast()
             }
             std::net::IpAddr::V6(value) => {
                 let first = value.segments()[0];
@@ -486,11 +485,7 @@ mod tests {
         let temporary = tempfile::tempdir().unwrap();
         let socket_directory = temporary.path().join("guest-tools");
         std::fs::create_dir(&socket_directory).unwrap();
-        std::fs::set_permissions(
-            &socket_directory,
-            std::fs::Permissions::from_mode(0o2770),
-        )
-        .unwrap();
+        std::fs::set_permissions(&socket_directory, std::fs::Permissions::from_mode(0o2770)).unwrap();
 
         let calls = Cell::new(0_u32);
         ensure_guest_tools_socket_directory_mode_with(&socket_directory, |_| {
@@ -503,20 +498,13 @@ mod tests {
         .unwrap();
         assert_eq!(calls.get(), 0);
 
-        std::fs::set_permissions(
-            &socket_directory,
-            std::fs::Permissions::from_mode(0o0770),
-        )
-        .unwrap();
+        std::fs::set_permissions(&socket_directory, std::fs::Permissions::from_mode(0o0770)).unwrap();
         let requested_mode = Cell::new(None);
-        ensure_guest_tools_socket_directory_mode_with(
-            &socket_directory,
-            |permissions| {
-                calls.set(calls.get() + 1);
-                requested_mode.set(Some(permissions.mode() & 0o7777));
-                Ok(())
-            },
-        )
+        ensure_guest_tools_socket_directory_mode_with(&socket_directory, |permissions| {
+            calls.set(calls.get() + 1);
+            requested_mode.set(Some(permissions.mode() & 0o7777));
+            Ok(())
+        })
         .unwrap();
         assert_eq!(calls.get(), 1);
         assert_eq!(requested_mode.get(), Some(0o2770));
@@ -579,22 +567,26 @@ mod tests {
                 speed_mbps: None,
                 duplex: None,
                 is_loopback: false,
-                addresses: vec![HostAddress {
-                    address: IpAddr::V4(Ipv4Addr::new(203, 0, 113, 10)),
-                    prefix_len: 24,
-                    scope: "global".into(),
-                    is_primary: true,
-                }, HostAddress {
-                    address: IpAddr::V4(Ipv4Addr::new(169, 254, 0, 1)),
-                    prefix_len: 30,
-                    scope: "link".into(),
-                    is_primary: false,
-                }, HostAddress {
-                    address: IpAddr::V6(Ipv6Addr::new(0xfe80, 0, 0, 0, 0, 0, 0, 1)),
-                    prefix_len: 64,
-                    scope: "link".into(),
-                    is_primary: false,
-                }],
+                addresses: vec![
+                    HostAddress {
+                        address: IpAddr::V4(Ipv4Addr::new(203, 0, 113, 10)),
+                        prefix_len: 24,
+                        scope: "global".into(),
+                        is_primary: true,
+                    },
+                    HostAddress {
+                        address: IpAddr::V4(Ipv4Addr::new(169, 254, 0, 1)),
+                        prefix_len: 30,
+                        scope: "link".into(),
+                        is_primary: false,
+                    },
+                    HostAddress {
+                        address: IpAddr::V6(Ipv6Addr::new(0xfe80, 0, 0, 0, 0, 0, 0, 1)),
+                        prefix_len: 64,
+                        scope: "link".into(),
+                        is_primary: false,
+                    },
+                ],
                 rx_bytes: 0,
                 tx_bytes: 0,
             }],
@@ -606,10 +598,7 @@ mod tests {
 
         persist_host_addresses(&database, &host).unwrap();
 
-        let address = database
-            .get_ip_address("203.0.113.10")
-            .unwrap()
-            .unwrap();
+        let address = database.get_ip_address("203.0.113.10").unwrap().unwrap();
         assert_eq!(address.status, IpStatus::Main);
         assert_eq!(address.pool_id.as_deref(), Some(pool.id.as_str()));
         assert_eq!(address.gateway.as_deref(), Some("203.0.113.1"));

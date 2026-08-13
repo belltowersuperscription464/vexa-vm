@@ -1104,11 +1104,14 @@
   }
 
   function configureCreateCapacity(host) {
-    const cpuCapacity = Math.max(0, Math.floor(finite(host.cpu_threads ?? host.cpu_cores) - finite(host.allocated_vcpus)));
-    const memoryAvailable = finite(host.memory?.available_bytes ?? host.ram_available_bytes ?? host.ram_total_bytes);
-    const ramCapacity = Math.max(0, Math.floor(Math.max(0, memoryAvailable - (256 * MiB)) / (256 * MiB)) * 256);
+    const legacyCpuCapacity = finite(host.cpu_threads ?? host.cpu_cores) - finite(host.allocated_vcpus);
+    const cpuCapacity = Math.min(512, Math.max(0, Math.floor(finite(host.available_vcpus, legacyCpuCapacity))));
+    const legacyMemoryAvailable = Math.max(0, finite(host.memory?.available_bytes ?? host.ram_available_bytes ?? host.ram_total_bytes) - (256 * MiB));
+    const memoryAvailable = finite(host.available_memory_bytes, legacyMemoryAvailable);
+    const ramCapacity = Math.min(16 * 1024 * 1024, Math.max(0, Math.floor(memoryAvailable / (256 * MiB)) * 256));
     const diskCapacity = Math.max(0, Math.floor(Math.max(0, finite(host.storage_free_bytes) - (2 * GiB)) / GiB));
-    state.createCapacity = { cpu: cpuCapacity, ramMiB: ramCapacity, diskGiB: diskCapacity };
+    const policy = host.capacity_policy || {};
+    state.createCapacity = { cpu: cpuCapacity, ramMiB: ramCapacity, diskGiB: diskCapacity, cpuRatio: finite(policy.cpu_overcommit_ratio, 1), memoryRatio: finite(policy.memory_overcommit_ratio, 1) };
 
     const cpu = $("#create-cpu"); const ram = $("#create-ram"); const disk = $("#create-disk");
     if (cpu) { cpu.max = String(Math.max(1, cpuCapacity)); if (cpuCapacity >= 1) cpu.value = String(Math.min(Math.max(1, finite(cpu.value, 1)), cpuCapacity)); }
@@ -1123,11 +1126,11 @@
     const requestedRam = finite($("#create-ram", form)?.value);
     const requestedDisk = finite($("#create-disk", form)?.value);
     if (capacity.cpu < 1 || capacity.ramMiB < 256 || capacity.diskGiB < 5) {
-      setCreateCapacityError(`This node does not currently have enough safe capacity to create a VM (available: ${capacity.cpu} vCPU, ${capacity.ramMiB} MiB RAM, ${capacity.diskGiB} GiB disk).`);
+      setCreateCapacityError(`This node does not currently have enough schedulable capacity to create a VM (available: ${capacity.cpu} vCPU, ${capacity.ramMiB} MiB RAM, ${capacity.diskGiB} GiB disk).`);
       return false;
     }
     if (requestedCpu > capacity.cpu || requestedRam > capacity.ramMiB || requestedDisk > capacity.diskGiB) {
-      setCreateCapacityError(`Requested resources exceed the safe node capacity: ${capacity.cpu} vCPU, ${capacity.ramMiB} MiB RAM, ${capacity.diskGiB} GiB disk. Reduce the request and try again.`);
+      setCreateCapacityError(`Requested resources exceed the schedulable node capacity: ${capacity.cpu} vCPU, ${capacity.ramMiB} MiB RAM, ${capacity.diskGiB} GiB disk. Reduce the request or adjust the overcommit policy in Settings.`);
       return false;
     }
     return true;
@@ -1234,7 +1237,7 @@
     const freeRam = (state.createCapacity?.ramMiB ?? 0) * MiB;
     const freeDisk = (state.createCapacity?.diskGiB ?? 0) * GiB;
     const capacity = $("#create-capacity");
-    if (capacity) capacity.innerHTML = `<p class="font-normal text-slate-300">Available now</p><dl class="mt-2 space-y-1"><div class="flex justify-between"><dt>vCPU</dt><dd>${Math.max(0, freeCpu) || "—"}</dd></div><div class="flex justify-between"><dt>Memory</dt><dd>${freeRam > 0 ? bytes(freeRam) : "—"}</dd></div><div class="flex justify-between"><dt>Storage</dt><dd>${freeDisk > 0 ? bytes(freeDisk) : "—"}</dd></div><div class="flex justify-between"><dt>Free IPs</dt><dd>${state.ips.length}</dd></div></dl>`;
+    if (capacity) capacity.innerHTML = `<p class="font-normal text-slate-300">Schedulable now</p><dl class="mt-2 space-y-1"><div class="flex justify-between"><dt>vCPU</dt><dd>${Math.max(0, freeCpu) || "—"}</dd></div><div class="flex justify-between"><dt>Memory</dt><dd>${freeRam > 0 ? bytes(freeRam) : "—"}</dd></div><div class="flex justify-between"><dt>Storage</dt><dd>${freeDisk > 0 ? bytes(freeDisk) : "—"}</dd></div><div class="flex justify-between"><dt>Free IPs</dt><dd>${state.ips.length}</dd></div></dl><p class="mt-2 border-t border-white/[.06] pt-2 text-[11px] text-slate-600">CPU ${state.createCapacity.cpuRatio.toFixed(2)}× · RAM ${state.createCapacity.memoryRatio.toFixed(2)}× with VirtIO ballooning</p>`;
   }
 
   function createPayload(form) {
